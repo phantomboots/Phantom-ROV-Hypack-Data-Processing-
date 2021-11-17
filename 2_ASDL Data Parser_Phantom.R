@@ -45,7 +45,7 @@ require(imputeTS) #Intepolation of missing time series values, where required (r
 require(measurements) #Facilitates converting data from the Hemisphere GPS from Deg/Decimal mins to Decimal degrees.
 
 
-########################################EDIT THESE DATA ##############################################
+########################################STEP 1 - EDIT THESE DATA ##############################################
 
 #Enter Project folder name
 
@@ -60,7 +60,7 @@ rov_roll_offset <- -1
 
 
 
-#######################################SET WORKING DIRECTORY AND GENERATE FOLDERS####################
+#######################################STEP 2 - SET WORKING DIRECTORY AND GENERATE FOLDERS####################
 
 #Directory where the ASDL files are stored
 ASDL_dir <- paste0(project_folder, "/Data/ASDL")
@@ -85,7 +85,7 @@ for(i in unique(dirs))
 #Set working directory, wherever the Advanced Serial data logger text files are saved.
 setwd(ASDL_dir)
 
-#########################READ IN THE ROV HEADING, DEPTH AND UTURNS FROM ASDL#########################
+#########################STEP 3 - READ IN THE ROV HEADING, DEPTH AND UTURNS FROM ASDL#########################
 
 #List files and read into one larger file. This is a comma seperate record, but some files have more columns than others, so need to
 #read in files without comma delimeters to start. Use the semi-colon as a bogus delimeter.
@@ -106,7 +106,7 @@ for(i in 1:length(ROV_files))
 }
 
 
-#Located date stamp values and time stamp values. Replace period in timestamp value with a colon. Parse date_time.
+#Locate date stamp values and time stamp values. Replace period in timestamp value with a colon. Parse date_time.
 
 ROV_all$date <- str_extract(ROV_all$X1, "\\d{8}")
 ROV_all$time <- str_extract(ROV_all$X1, "\\d{2}\\:\\d{2}\\.\\d{2}")
@@ -132,7 +132,7 @@ write.csv(ROV_all, paste(save_dir,"ROV_Heading_Depth_MasterLog.csv", sep ="/"), 
 
 }
 
-########################READ IN THE TRITECH ALTIMETER SLANT RANGE FROM ASDL########################################
+########################STEP 4 - READ IN THE TRITECH ALTIMETER SLANT RANGE FROM ASDL########################################
 
 #List files and read into one larger file. This is a comma seperate record, but some files have more columns than others, so need to
 #read in files without comma delimeters to start. Use the semi-colon as a bogus delimeter.
@@ -190,7 +190,7 @@ Tritech_all <- Tritech_all[,c(10,11)]
 write.csv(Tritech_all, paste(save_dir,"Tritech_SlantRange_MasterLog.csv", sep = "/"), quote = F, row.names = F)
 }
 
-########################READ IN MINIZEUS ZOOM, FOCUS, APERTURE AND CREATE MASTER LOG##################################
+########################STEP 5 - READ IN MINIZEUS ZOOM, FOCUS, APERTURE AND CREATE MASTER LOG##################################
 
 #List files and read into one larger file. This is a comma seperate record, but some files have more columns than others, so need to
 #read in files without comma delimeters to start. Use the semi-colon as a bogus delimeter.
@@ -241,7 +241,7 @@ write.csv(MiniZeus_ZFA_all, paste(save_dir,"MiniZeus_ZFA_MasterLog.csv", sep = "
 
 }
 
-##########################READ IN THE RBR CTD LOG FROM ASDL########################################################
+##########################STEP 6 - READ IN THE RBR CTD LOG FROM ASDL########################################################
 
 #List files and read into one larger file. Some files will contain status information from the RBR while it is connected to Ruskin
 #these records include the text "Ready"; drop these records during the read in process.
@@ -301,7 +301,7 @@ RBR_all <- filter(RBR_all, Depth_m >= 1)
 write.csv(RBR_all, paste(save_dir,"RBR_CTD_MasterLog.csv", sep = "/"), quote = F, row.names = F)
 # }
 
-#########################################READ IN THE HEMISPHERE GPS POSITION AND HEADING ################################
+#########################################STEP 7 - READ IN THE HEMISPHERE GPS POSITION AND HEADING ################################
 
 #List files and read into one larger file. This is a comma seperate record, but some files have more columns than others, so need to
 #read in files by skipping the first line of each file to start. 
@@ -389,7 +389,7 @@ write.csv(GPS_and_Heading, paste(save_dir,"Hemisphere_GPS_Heading_MasterLog.csv"
 
 #}
 
-#########################################READ IN THE HEMISPHERE HEADING DATA ONLY###################################
+#########################################STEP 8 - READ IN THE HEMISPHERE HEADING DATA ONLY###################################
 
 #List files and read into one larger file. This is a comma seperate record, but some files have more columns than others, so need to
 #read in files by skipping the first line of each file to start. 
@@ -435,7 +435,7 @@ names(Hemisphere_Heading_all) <- c("date_time","Ship_heading")
 write.csv(Hemisphere_Heading_all, paste(save_dir,"Hemisphere_Heading_MasterLog.csv", sep ="/"), quote = F, row.names = F)
 }
 
-#######################################READ IN TRACKMAN DATA RECORDS####################################################
+#######################################STEP 9 - READ IN TRACKMAN DATA RECORDS####################################################
 
 #List files and read into one larger file. This is a comma seperate record, but some files have more columns than others, so need to
 #read in files by skipping the first line of each file to start. 
@@ -487,7 +487,7 @@ write.csv(TrackMan_all, paste(save_dir,"TrackMan_Beacons_MasterLog.csv", sep = "
 }
 
 
-####################################READ IN ROWETech DVL DATA#############################################################
+####################################STEP 10 - READ IN ROWETech DVL DATA#############################################################
 
 #List files and read into one larger file. This is a comma seperate record, but some files have more columns than others, so need to
 #read in files by skipping the first line of each file to start. 
@@ -562,7 +562,7 @@ names(DVL_all) <- c("date_time","Bottom_X_Velocity_ms","Bottom_Y_Velocity_ms","B
 write.csv(DVL_all, paste(save_dir,"ROWETECH_DVL_MasterLog.csv", sep = "/"), quote = F, row.names = F)
 }
 
-#############################################READ IN VECTOR 12 KHZ SOUNDER DATA#############################################
+#############################################STEP 11 - READ IN VECTOR 12 KHZ SOUNDER DATA#############################################
 
 
 Vector_12_files <- list.files(ASDL_dir, pattern = "Vector_12")
@@ -613,7 +613,7 @@ if(length(Vector_12_files != 0))
   write.csv(Vector_12_all, paste(save_dir,"Vector_12Khz_Sounder_MasterLog.csv", sep = "/"), quote = F, row.names = F)
 }
 
-#############################################READ IN ROV AND MINIZEUS IMUS#############################################
+#############################################STEP 13 - READ IN ROV AND MINIZEUS IMUS#############################################
 
 
 IMU_files <- list.files(ASDL_dir, pattern = "Zeus_Cans")
