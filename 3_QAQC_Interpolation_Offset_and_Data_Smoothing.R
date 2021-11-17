@@ -522,6 +522,8 @@ for(i in unique(Dives))
   assign(i, name)
 }
 
+#############################################STEP 11 - APPLY LOESS AND RUNNING MEDIAN SMOOTHING TO ROV POSITION DATA #############################################
+
 #Smooth the interpolated beacon position with the Loess smoother, with an alpha value of 0.05
 
 for(i in unique(Dives))
@@ -548,7 +550,7 @@ for(i in unique(Dives))
   assign(i, name)
 }
 
-###################################STEP 11 - WRITE FINAL PROCESSED DATA TO FILE####################################################
+###################################STEP 12 - WRITE FINAL PROCESSED DATA TO FILE####################################################
 
 #Create final processed files, and write to .CSV.
 
