@@ -21,5 +21,11 @@ This script contains functions to try fill in missing data from ROV sensors, as 
 
 The script integrates data logs from both Hypack .RAW files and Advanced Serial Data Logger's (ASDL) log files. Where data records are missing from the Hypack .RAW file, backup copies of the missing data are sought from the ASDL log files and are used to fill in the missing data if possible.
 
-Linear interpolation is conducted for position data (latitude & longitude), as well as the data from the ROV's depth, altitude, heading (ship and ROV) and MiniZeus slant range to target. Offset for the mounting location of the GPS antenna on the survey vessel are then applied to the interpolated position data 
+Linear interpolation is conducted for position data (latitude & longitude), as well as the data from the ROV's depth, altitude, heading (ship and ROV) and MiniZeus slant range to target. Offset for the mounting location of the GPS antenna on the survey vessel are then applied to the interpolated position data.
+
+A simple outlier analysis process is conducted on the data after the appropriate offsets have been applied. This function calculates the cross-track distance between the survey vessel and the interpolated position data from the ROV's beacon. On a second to second time scale, the distance between the ship and the ROV should not change substantially. Large deviations in the distance between the ship and ROV on a second to second timescale are indentified, classified as outliers, and removed. A second round of linear interpolation is used to fill in the 'holes' in the data where outliers were removed.
+
+Lastly, two seperate smoothing functions are applied to the ROV's position data. This inclcudes a running median function (https://stat.ethz.ch/R-manual/R-devel/library/stats/html/runmed.html) as well as a LOESS smoothing function (http://r-statistics.co/Loess-Regression-With-R.html). These two function both improve on the unsmoothed data set. In general, the LOESS smoother will provide a better (i.e. smoother) final output to the data set; however, in cases where the tracking was exceedingly poor, the running median smoothing function may provide a better output. Both smoothed data sets are provided as outputs from this script, to allow the end user to choose according to their needs.
+
+At the end of this script, a .CSV file is written for each transect, at a 1 Hz interval.
 
