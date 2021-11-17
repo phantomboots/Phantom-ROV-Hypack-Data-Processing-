@@ -60,7 +60,7 @@ require(rgdal) #This loads package sp
 require(zoo)
 
 
-###############################EDIT THESE VALUES######################################################
+###############################STEP 1 - EDIT THESE VALUES######################################################
 
 #Enter Project folder name
 
@@ -88,7 +88,7 @@ pos_secondary <- "USBL_300-564"
 depth_secondary <- "ROV_Heading_Depth_UTurns"
 
 
-#################################CHECK AND MAKE DIRECTORIES AS NEEDED #################################
+#################################STEP 2- CHECK AND MAKE DIRECTORIES AS NEEDED #################################
 
 #Working directory for location of Hypack .RAW files
 
@@ -117,7 +117,7 @@ for(i in unique(dirs))
 }
 
 
-################################READ IN DATA##########################################################
+################################STEP 3 - READ IN DATA##########################################################
 
 #Files use a single space as a delimeter. Metadata in first 9 lines does not contain sufficient columns, so for now,
 #it is skipped. No header row. Read in RAW file exports; loop through all files in the Hypack .RAW directory, 
@@ -189,7 +189,7 @@ all_input$zone[all_input$zone == -129] <- 9
 all_input$zone[all_input$zone == -135] <- 8
 
 
-################################TRIM THE FILE TO TRANSECT START AND END TIMES#########################
+################################STEP 4 - READ IN DIVE LOG AND TRIM THE FILE TO TRANSECT START AND END TIMES#########################
 
 #Read in the start and end time from the Dive Log
 
@@ -221,7 +221,7 @@ write.csv(full_seq, paste(Log_path,"Dive_Times_1Hz.csv", sep = "/"), quote = F, 
 #Merge the dive data frames and the 1 Hz sequence using a common timestamp value.
 dives_full <- left_join(full_seq, all_input, by = "date_time")
 
-################################EXTRACT DEPTH DATA####################################################
+################################STEP 5 - EXTRACT DEPTH DATA####################################################
 
 #Select rows in the first column (X1) that have a 'EC1' identifier. Keep only the data from the primary and secondary
 #depth data sources. These are the RBR CTD (primary) and onboard Phantom Depth sensor (secondary)
@@ -264,7 +264,7 @@ for(k in 1:length(depth_all$date_time))
 depth_all <- depth_all[,c(1,4,2,3)]
 names(depth_all) <- c("date_time","Dive_Name","device","Depth_m")
 
-################################EXTRACT HEADING DATA###################################################
+################################STEP 6 - EXTRACT HEADING DATA###################################################
 
 #Select rows in the first column (X1) that have a 'GYR' identifier. These should heading values from 
 #the ship's GPS source, as well as the onboard compass. 
@@ -284,7 +284,7 @@ ship_heading_data <- ship_heading_data[!duplicated(ship_heading_data$date_time),
 ship_heading_data <- ship_heading_data[, c(2,1,10,7)]
 names(ship_heading_data) <- c("date_time","Dive_Name","device","Ship_heading")
 
-#############################SEARCH FOR ALTITUDE, EXTRACT IT IF ITS PRESENT############################
+#############################STEP 7 - SEARCH FOR ALTITUDE, EXTRACT IT IF ITS PRESENT############################
 
 #The Phantom's altitude is read in as 'draft' data source, and is output by the ROWETech DVL. Select altitude device ID (DFT), then
 #select the prefered altitude device. No substitute device, so those rows that are missing data will retain NA values.
@@ -301,7 +301,7 @@ names(altitude_data) <- c("date_time","Transect_Name","device","altitude_m")
 #If the altitude is 0 m, this indicates an out of range reading. Substitute in -9999 for these cases.
 altitude_data$altitude_m[altitude_data$altitude_m == 0] <- -9999
 
-#####################################EXTRACT MINIZEUS SLANT RANGE######################################
+#####################################STEP 8 - EXTRACT MINIZEUS SLANT RANGE######################################
 
 #Phantom slant range altitude is read in as a depth data source, through the Tritech Altimeter. Select depth device ID (EC1), then
 #select the prefered slant_range device. No substitute device, so those rows that are missing data will retain NA values.
@@ -316,7 +316,7 @@ slant_data <- slant_data[, c(2,1,10,7)]
 names(slant_data) <- c("date_time","Transect_Name","device","slant_range_m")
 
 
-###################SEARCH FOR SPEED DATA; EXTRACT IT IF IT'S PRESENT################################
+###################STEP 9 - SEARCH FOR SPEED DATA; EXTRACT IT IF IT'S PRESENT################################
 
 #Search for rows in the first column (X1) that have a 'HCP' identifier. These are heave, pitch and roll values
 #Only interested in the heave values have been used as place holders for speed, since Hypack does not have a
@@ -337,7 +337,7 @@ if(which(dives_full$X2 == "HCP") != 0)
 speed_data$speed_kts[slant_data$speed_kts == -99.999] <- -9999
 speed_data$speed_kts[slant_data$speed_kts == 0] <- -9999
 
-################################EXTRACT POSITION DATA FOR BEACONS#######################################
+################################STEP 10 - EXTRACT POSITION DATA FOR BEACONS#######################################
 
 #Select rows in the first column (X1) that have a 'POS' identifier. Keep only the preffered and secondary POS devices
 #If the prefferd source is unavailable, use the secondary source to fill larger gaps. If there is a gap of only 1 or 2 seconds
@@ -388,7 +388,7 @@ position_all <- position_all[,c(2,1,4:6,10,11,13,7)]
 names(position_all) <- c("date_time","Transect_Name","device","Main_Beacon_Easting","Main_Beacon_Northing",
                          "Secondary_Beacon_Easting","Secondary_Beacon_Northing","Gaps","zone")
 
-####################################EXTRACT SHIP GPS POSITION#############################################
+####################################STEP 11 - EXTRACT SHIP GPS POSITION#############################################
 
 ship_GPS_data <- filter(dives_full, X2 == "POS" & device == GPS_pref)
 ship_GPS_data <- left_join(full_seq, ship_GPS_data, by = "date_time")
@@ -405,7 +405,7 @@ position_all <- position_all[,c(1:7,12,13,8,14)]
 names(position_all) <- c("date_time","Transect_Name","device","Main_Beacon_Easting","Main_Beacon_Northing",
                          "Secondary_Beacon_Easting","Secondary_Beacon_Northing","Ship_Easting","Ship_Northing","Gaps","zone")
 
-###################SEARCH FOR ROGUE CAM PITCH AND ROLL DATA; EXTRACT IT IF IT'S PRESENT################################
+###################STEP 12 - SEARCH FOR ROGUE CAM PITCH AND ROLL DATA; EXTRACT IT IF IT'S PRESENT################################
 
 #Search for rows in the first column (X1) that have a 'HCP' identifier. These are heave, pitch and roll values
 #This can include heave from a DVL, as well a from onboard IMU devices (i.e. Rogue Cam pitch and roll sensor).
@@ -421,7 +421,7 @@ if(which(dives_full$X2 == "HCP") != 0)
 }
 
 
-######################CONVERT THE POSITION DATA TO DECIMAL DEGREES####################################
+######################STEP 13 - CONVERT THE POSITION DATA TO DECIMAL DEGREES####################################
 
 #In order to convert the data that is recorded by Hypack as UTM values, the position_all data frame needs to be converted to
 #a SpatialPointsDataFrame, which is class in the package(sp), loaded by package(rgdal) at the start of this script. 
@@ -531,7 +531,7 @@ position_all$Ship_Lat <- round(position_all$Ship_Lat, digits = 5)
 
 
 
-#####################################ASSEMBLE ALL DATA TO SINGLE DATA FRAME###########################
+#####################################STEP 14 - ASSEMBLE ALL DATA TO A SINGLE DATA FRAME###########################
 
 #Join position data with depth, heading, altitude, slant range and RogueCam pitch and roll data records for the full period of record (descent, on transect, ascent)
 
@@ -557,7 +557,7 @@ all_data$Position_Source <- position_all$device
 all_data <- all_data[,c(1:2,3:9,11:20,10)]
 
 
-#######################################WRITE CLIPPED .CSV FILES FOR EACH DIVE##################################
+#######################################STEP 15 - WRITE CLIPPED .CSV FILES FOR EACH DIVE##################################
 
 
 #Loop through the Dive Names in the all_data frames, write one .CSV for the clipped (on transect data) for each dive.
