@@ -554,7 +554,7 @@ all_data$Position_Source <- position_all$device
 #Depth_m, Phantom Heading, Ship Heading, Phantom Speed, Phantom Altitude, MiniZeus Slant Range, Rogue Pitch, Rogue Roll, Depth Data Source
 #Position Source, Gaps. Device column is dropped.
 
-all_data <- all_data[,c(1:2,3:9,11:20,10)]
+all_data <- all_data[,c(1:2,4:9,11:20,10)]
 
 
 #######################################STEP 15 - WRITE CLIPPED .CSV FILES FOR EACH DIVE##################################
