@@ -486,55 +486,6 @@ for(i in unique(position_all$Transect_Name))
   
 }
 
-########
-#A spatial points DF cannot be generated with NA values in the positions, but we want to keep these for replacement later.
-#make a new DF that is a copy of position_all, but with NA values removed.
-
-main_beacon_no_NA <- filter(position_all, !is.na(Main_Beacon_Easting))
-secondary_beacon_no_NA <- filter(position_all, !is.na(Secondary_Beacon_Easting))
-ship_no_NA <- filter(ship_GPS_data, !is.na(Ship_Easting))
-
-#A SpatialPointsDataFrame needs to be created to convert from UTMs to Lat/Long. This is an object class
-#from library(sp), which is loaded by library(rgdal). Need coordinates, data and projection (CRS)
-
-main_beacon_coordinates <- main_beacon_no_NA[, c("Main_Beacon_Easting","Main_Beacon_Northing")] # UTM coordinates for the primary transponer
-secondary_beacon_coordinates <- secondary_beacon_no_NA[, c("Secondary_Beacon_Easting","Secondary_Beacon_Northing")] # UTM coordinates for the Hemisphere GPS
-ship_coordinates <- ship_no_NA[,c("Ship_Easting","Ship_Northing")]
-main_beacon_data <- main_beacon_no_NA[, c("date_time","Transect_Name","device","Gaps")] # data to keep
-secondary_beacon_data <- as.data.frame(secondary_beacon_no_NA[, c("date_time")]) # data to keep
-ship_data <- as.data.frame(ship_no_NA[, c("date_time")]) #data to keep.
-crs <- CRS(paste0("+proj=utm +zone=", UTM_Zone_to_process," +datum=WGS84")) #proj4string of coordinates.
-
-#Assemble the spatial data points DF.
-
-main_beacon_spatial <- SpatialPointsDataFrame(coords = main_beacon_coordinates, data = main_beacon_data, proj4string = crs)
-
-#Check to see if a see if there is any data for a secondary beacon, if one was not used, skip this step to prevent errors from being generated.
-if(length(position_data2$date_time) !=0) 
-{  
-  secondary_beacon_spatial <- SpatialPointsDataFrame(coords = secondary_beacon_coordinates, data = secondary_beacon_data, proj4string = crs)
-}
-ship_spatial <- SpatialPointsDataFrame(coords = ship_coordinates, data = ship_data, proj4string = crs)
-
-#Transform the UTMs coordinates in lat/longs in decimal degrees. Then turn it back into a regular DF
-
-main_beacon_spatial <- spTransform(main_beacon_spatial, CRS("+proj=longlat +datum=WGS84"))
-if(length(position_data2$date_time) !=0) #Check to see if there is a secondary beacon was used, and if there is any data for it.
-{  
-  secondary_beacon_spatial <- spTransform(secondary_beacon_spatial, CRS("+proj=longlat +datum=WGS84"))
-}
-ship_spatial <- spTransform(ship_spatial, CRS("+proj=longlat +datum=WGS84"))
-
-main_beacon_spatial <- as.data.frame(main_beacon_spatial)
-main_beacon_spatial <- main_beacon_spatial[,c(1:3,5:6)]
-if(length(position_data2$date_time) !=0) #As above, secondary beacon may not have been used. Skip next step if so.
-{
-  secondary_beacon_spatial <- as.data.frame(secondary_beacon_spatial)
-}
-ship_spatial <- as.data.frame(ship_spatial)
-
-#########
-
 #Rename the columns.
 
 names(main_beacon_geographic) <- c("date_time","Transect_Name","device","Beacon_Long","Beacon_Lat")
