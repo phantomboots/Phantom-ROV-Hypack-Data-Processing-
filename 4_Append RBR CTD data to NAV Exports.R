@@ -49,15 +49,15 @@ RBR_input <- paste0(project_folder, "/Data/RBR_CTD_Data")
 
 #Set working directory for the ASDL RBR_Master, in case data needs to be recoverd
 
-Master_ASDL <- paste0(project_folder, "/Data/ASDL/Full_Cruise")
+Master_ASDL <- paste0(project_folder, "/Data/Advanced_Serial_Data_Logger/Full_Cruise")
 
 #Set working directory for location of smoothed .CSV files from the Hypack Export
 
-NAV_input <- paste0(project_folder, "/Data/Smoothed_Exports")
+NAV_input <- paste0(project_folder, "/Data/Secondary_Processed_Data")
 
 #Set a path for saving data exported at the end of this script
 
-save_path <- paste0(project_folder, "/Data/NAV_with_CTD")
+save_path <- paste0(project_folder, "/Data/Final_Processed_Data")
 
 #Vector of directories to check for
 
