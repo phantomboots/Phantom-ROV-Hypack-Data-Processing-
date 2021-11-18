@@ -49,7 +49,7 @@ Hypack_input <- paste0(project_folder, "/Data/Hypack_Backup/Raw")
 
 #Directory for processed .CSV files created from "3_QAQC_Interpolated and Smooth Data.R"
 
-imports_dir <- paste0(project_folder,"/Data/NAV_with_CTD")
+imports_dir <- paste0(project_folder,"/Data/Final_Processed_Data")
 
 #Path for .KML files that are created in this script.
 
