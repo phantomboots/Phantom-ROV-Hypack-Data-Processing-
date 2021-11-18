@@ -16,9 +16,7 @@
 # writing a data flag to alert the user.
 #
 # In the particular case of position data records, the script will convert the projected UTM coordinates that are stored in the Hypack .LOG file into
-# decimal degrees, to facilitate processing in later steps. The user is required to enter the UTM Zone at the start of the script run. 
-#
-#                                           DON'T PROCESS FILES FROM SEPERATE UTM ZONES IN THE SAME RUN!
+# decimal degrees.
 #
 # All data is merged into seperate data frame for each transect, and is written out as .CSV files.
 #
@@ -100,7 +98,7 @@ Log_path <- paste0(project_folder,"/Data/Dive_Logs")
 
 #Directory for saving both clipped and unclipped .CSV files
 
-save_dir <- paste0(project_folder, "/Data/Processed_Data")
+save_dir <- paste0(project_folder, "/Data/Initial_Processed_Data")
 
 #Vector of directories to check for
 
