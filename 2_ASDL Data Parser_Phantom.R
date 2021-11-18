@@ -63,10 +63,10 @@ rov_roll_offset <- -1
 #######################################STEP 2 - SET WORKING DIRECTORY AND GENERATE FOLDERS####################
 
 #Directory where the ASDL files are stored
-ASDL_dir <- paste0(project_folder, "/Data/ASDL")
+ASDL_dir <- paste0(project_folder, "/Data/Advanced_Serial_Data_Logger")
 
 #Set the directory for saving of the master files.
-save_dir <- paste0(project_folder, "/Data/ASDL/Full_Cruise")
+save_dir <- paste0(project_folder, "/Data/Advanced_Serial_Data_Logger/Full_Cruise")
 
 #Vector of directories to check for
 
