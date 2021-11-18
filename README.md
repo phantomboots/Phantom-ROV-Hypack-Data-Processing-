@@ -29,3 +29,6 @@ Lastly, two seperate smoothing functions are applied to the ROV's position data.
 
 At the end of this script, a .CSV file is written for each transect, at a 1 Hz interval.
 
+**4_Append RBR_CTD_to_NAV_Export**
+
+This script reads in CTD data exported as Excel files (.xlsx) and appends them to 
