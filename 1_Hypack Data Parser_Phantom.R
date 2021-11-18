@@ -201,9 +201,9 @@ log$End_time_UTC <- log$End_time_UTC + minutes(5)
 #Generate a second-by-second sequence of timestamps from the start to finish of the on-transect portion of each dive, coerce to DF
 #that includes the dive number. Bind sequence for all dives together into a single DF.
 
-for(h in 1:length(log$Dive_Name))
+for(h in 1:length(log$Transect_Name))
 {
-  name <- log$Dive_Name[h]
+  name <- log$Transect_Name[h]
   temp <- seq(log$Start_time_UTC[h],log$End_time_UTC[h], 1)
   sec_seq <- data.frame(Transect_Name = name, date_time = temp)
   if(h == 1)
