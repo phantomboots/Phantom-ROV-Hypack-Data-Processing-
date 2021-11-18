@@ -88,7 +88,7 @@ Hypack_input <- paste0(project_folder,"/Data/Hypack_Backup/Raw")
 
 #Directory for processed dives
 
-processed_dir <- paste0(project_folder, "/Data/Processed_Data")
+processed_dir <- paste0(project_folder, "/Data/Initial_Processed_Data")
 
 #Set a directory for the location of the Dive Log
 
@@ -96,11 +96,11 @@ Log_path <- paste0(project_folder,"/Data/Dive_Logs")
 
 #Path for ASDL Master Log files
 
-Master_ASDL <- paste0(project_folder, "/Data/ASDL/Full_Cruise")
+Master_ASDL <- paste0(project_folder, "/Data/Advanced_Serial_Data_Logger/Full_Cruise")
 
 #Path for final exports
 
-final_dir <- paste0(project_folder,"/Data/Final_Exports")
+final_dir <- paste0(project_folder,"/Data/Secondary_Processed_Data")
 
 #Vector of directories to check for
 
