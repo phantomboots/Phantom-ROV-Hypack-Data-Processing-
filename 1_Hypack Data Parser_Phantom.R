@@ -36,6 +36,8 @@
 # Apr 21, 2021: Updated device read in values, Cyclops HPR records removed, switched to RogueCam. Updated the initial read in loop to read an extra column
 #               now reads up to column X6 (previously was only to X5). This allows for appropriate parsing of the HPR devices, which includes data up to column X6.
 # Apr 27, 2021: Added new section to create non-clipped data records, this is to allow plotting of certain variables during the descent/ascent phase of each dive.
+#
+# Nov 18, 2021: Tested GitHub functionality with RStudio
 #=====================================================================================================
 
 #Check for the presence of packages shown below, install any packages that are missing
