@@ -38,7 +38,7 @@ require(dplyr)
 
 #Project folder name 
 
-project_folder <- "~/Projects/Apr2021_Phantom_Cruise_PAC2021_035"
+project_folder <- "~/Projects/Anchor Scour Cumulative Effects_2021_22"
 
 ########################################STEP 2 - CHECK FOR AND GENERATE DIRECTORIES############################################## 
 
@@ -96,7 +96,7 @@ RBR_files <- list.files(pattern = ".xlsx")
 for(i in 1:length(RBR_files))
 {
   name <- as.character(i)
-  assign(name, read_xlsx(RBR_files[i], sheet = "Data" , skip = 1))
+  assign(name, read_xlsx(RBR_files[i], sheet = "Data" , skip = 1, guess_max = 10000)) #Increase the max guess range, since sometimes there are many rows missing at beginning
   RBR_merged <- bind_rows(RBR_merged, get(name))
   rm(list = c(i)) #Discard the temp files.
 }
@@ -168,7 +168,7 @@ for(h in 1:length(NAV_files))
 {
   temp <- get(NAV_files[h])
   names(temp) <- full_names
-  temp <- temp[, c(1:28,30:39)] #Remove the conductivity column, keep only specific conductivity.
+  temp <- temp[, c(1:27,29:38)] #Remove the conductivity column, keep only specific conductivity.
   assign(NAV_files[h], temp)
 }
 
