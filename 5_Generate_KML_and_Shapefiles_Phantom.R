@@ -34,11 +34,11 @@ require(geosphere)
 
 #Name of Ship used in the survey
 
-ship_name <- "CCGS Vector"
+ship_name <- "RV Manyberries"
 
 #Enter Project folder name
 
-project_folder <- "~/Projects/Apr2021_Phantom_Cruise_PAC2021_035"
+project_folder <- "~/Projects/Anchor Scour Cumulative Effects_2021_22"
 
 
 #################################STEP 2 - CHECK AND MAKE DIRECTORIES AS NEEDED #################################
@@ -194,8 +194,8 @@ for(i in unique(Dives))
   name <- read_csv(i)
   name$Beacon_Lat_interp <- abs(name$Beacon_Lat_interp)
   name$Beacon_Long_interp <- -1*abs(name$Beacon_Long_interp) #Set longitudes to all negatives.
-  name$Ship_Lat <- abs(name$Ship_Lat)
-  name$Ship_Long <- -1*abs(name$Ship_Long) #As above
+  name$Ship_Lat <- abs(name$Ship_Lat_interp)
+  name$Ship_Long <- -1*abs(name$Ship_Long_interp) #As above
   assign(i, name)
 }
 
