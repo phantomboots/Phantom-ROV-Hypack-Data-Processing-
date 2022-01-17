@@ -1,202 +1,218 @@
-#=====================================================================================================
+#===============================================================================
 # Script Name: 1_Hypack Data Parser_Phantom.R
 #
-# Script Function: This script is designed to unpack the Hypack .LOG files, and to extract various pieces of the data that are contained
-# within the logs. The script locates files with the .LOG extension, reads them in and extract the timestamps, device (sensor) names, and
-# sensor data for positions, depths, heading, altitude, speed and slant range (from camera). The script searches for duplicate timestamp records
-# for data sources that update faster than 1 Hz, and then removes extra records to preserved a common 1 Hz time series for all sensors.
+# Script Function: This script is designed to unpack the Hypack .LOG files, and 
+# to extract various pieces of the data that are contained within the logs. The 
+# script locates files with the .LOG extension, reads them in and extract the 
+# timestamps, device (sensor) names, and sensor data for positions, depths, 
+# heading, altitude, speed and slant range (from camera). The script searches 
+# for duplicate timestamp records for data sources that update faster than 1 Hz, 
+# and then removes extra records to preserved a common 1 Hz time series for all 
+# sensors.
 # 
-# The script design at this point is to merge all records from the .LOG files in the working directory into one 'master file', and to 
-# then use transect start/end time to 'trim' the master file time series to the periods of interest. Specifically, data is trimmed to transect 
-# start/end times based on timestamps provided in an accompanying Dive Log file, which is assumed to be an MS Excel file with start/end times for 
-# each transect. 
+# The script design at this point is to merge all records from the .LOG files in 
+# the working directory into one 'master file', and to then use transect start/
+# end time to 'trim' the master file time series to the periods of interest. 
+# Specifically, data is trimmed to transect start/end times based on timestamps 
+# provided in an accompanying Dive Log file, which is assumed to be an MS Excel 
+# file with start/end times for each transect. 
 #
-# Relevant data are then extract, one parameter at a time, from the trimmed master file. In some cases, the script will search for the preffered
-# data source first (i.e. CTD depth, rathen than onboard depth sensor) and will fall back to extracting the secondary source as required, while also
-# writing a data flag to alert the user.
+# Relevant data are then extracted, one parameter at a time, from the trimmed 
+# master file. In some cases, the script will search for the preferred data 
+# source first (i.e. CTD depth, rather than onboard depth sensor) and will fall 
+# back to extracting the secondary source as required, while also writing a data 
+# flag to alert the user.
 #
-# In the particular case of position data records, the script will convert the projected UTM coordinates that are stored in the Hypack .LOG file into
-# decimal degrees.
+# In the particular case of position data records, the script will convert the 
+# projected UTM coordinates that are stored in the Hypack .LOG file into decimal 
+# degrees.
 #
-# All data is merged into seperate data frame for each transect, and is written out as .CSV files.
+# All data is merged into separate data frame for each transect, and is written 
+# out as .CSV files.
 #
 # Script Author: Ben Snow
 # Script Date: Aug 27, 2019
 # R Version: 3.5.1
 #
-##################################################################################################################
+################################################################################
 #                                           CHANGE LOG
-##################################################################################################################
+################################################################################
 #
-# May 12, 2020: Padded transect start and end times by 5 minutes on either side, as per request from J.Nehphin and S. Humphries.
-# May 24, 2020: Changed out of range values for Tritech PA500 altimeter (MiniZeus Slant Range) and ROWETech DVL (Altitude) to -9999, instead of N/A
-#               Note that Phantom ROV speed (from the DVL) be default reads -9999 when out of range.
-# June 2, 2020: Both Phantom heading and ship heading are now exported by this script; previously it was only the phantom's heading. Also, channged out-of
-#               range data values for speed from -99.9999 to -9999, to maintain consistency with Altitude and Slant Range Calculations.
-# Apr 21, 2021: Updated device read in values, Cyclops HPR records removed, switched to RogueCam. Updated the initial read in loop to read an extra column
-#               now reads up to column X6 (previously was only to X5). This allows for appropriate parsing of the HPR devices, which includes data up to column X6.
-# Apr 27, 2021: Added new section to create non-clipped data records, this is to allow plotting of certain variables during the descent/ascent phase of each dive.
-#
+# May 12, 2020: Padded transect start and end times by 5 minutes on either side, 
+#               as per request from J.Nephin and S. Jeffery
+# May 24, 2020: Changed out of range values for Tritech PA500 altimeter 
+#               (MiniZeus Slant Range) and ROWETech DVL (Altitude) to -9999, 
+#               instead of N/A. Note that Phantom ROV speed (from the DVL) be 
+#               default reads -9999 when out of range.
+# June 2, 2020: Both Phantom heading and ship heading are now exported by this 
+#               script; previously it was only the phantom's heading. Also, 
+#               changed out-of range data values for speed from -99.9999 to 
+#               -9999, to maintain consistency with Altitude and Slant Range 
+#               Calculations.
+# Apr 21, 2021: Updated device read in values, Cyclops HPR records removed, 
+#               switched to RogueCam. Updated the initial read in loop to read 
+#               an extra column now reads up to column X6 (previously was only 
+#               to X5). This allows for appropriate parsing of the HPR devices, 
+#               which includes data up to column X6.
+# Apr 27, 2021: Added new section to create non-clipped data records, this is to 
+#               allow plotting of certain variables during the descent/ascent 
+#               phase of each dive.
 # Nov 18, 2021: Tested GitHub functionality with RStudio
-#=====================================================================================================
+# Jan 17, 2022: Started develop branch, JN to review and edit as needed
+################################################################################
 
-#Check for the presence of packages shown below, install any packages that are missing
-packages <- c("lubridate","sp","readxl","readr","dplyr","stringr","rgdal","zoo")
+
+
+#===============================================================================
+# Set up
+
+# Check for the presence of packages shown below, install if needed
+packages <- c("lubridate", "sp", "readxl", "readr",
+              "dplyr", "stringr", "rgdal", "zoo")
 new_packages <- packages[!(packages %in% installed.packages()[,"Package"])]
 if(length(new_packages)) install.packages(new_packages)
 
-#Explicitly set the number of sig figs high, to faciliate inspection of UTM data records
+# Set the number of sig figs high, to facilitate inspection of UTM data records
 options(digits = 12)
 
-
-#Required packages#
-
-require(lubridate)
-require(readxl)
-require(readr)
-require(dplyr)
-require(stringr)
-require(rgdal) #This loads package sp 
-require(zoo)
+# Load required packages
+lapply(packages, require, character.only = TRUE)
 
 
-###############################STEP 1 - EDIT THESE VALUES######################################################
 
-#Enter Project folder name
+#===============================================================================
+# STEP 1 - SET PATHS AND MAKE EXPORT DIRECTORY
 
-project_folder <- "~/Projects/Apr2021_Phantom_Cruise_PAC2021_035"
+# Enter Project folder name
+project_folder <- "Test"
 
+# Assign path to Hypack .RAW files
+# Path must start from your working directory, check with getwd(), or full paths
+hypack_path <- paste0(project_folder, "/Data/Raw")
 
-#Names for prefferred devices for position, depth, heading, draft and heave data sources. Must match the names 
-#as listed in hardware devices. If a device is not present, write NULL. MAKE SURE DEVICE NAMES MATCH .RAW FILES 
-#EXACTLY!
+# Assign path to dive log csv file
+# Path must start from your working directory, check with getwd(), or full paths
+divelog_path <- paste0(project_folder,"/Data/Dive_Logs/Dive_Log.csv")
 
-pos_pref <- "USBL_4370_Wide"
-depth_pref <- "RBR_CTD_Depth"
-speed_pref <- "ROWETech_DVL"
-phantom_heading_pref <- "ROV_Heading_Depth_UTurns"
-ship_heading_pref <- "Hemisphere_GPS"
-altitude_pref <- "ROWETech_DVL"
-slant_pref <- "Tritech_Slant_Range"
-GPS_pref <- "Hemisphere_GPS"
-rogue_cam_pref <- "Rogue_IMU_Pitch_Roll"
-
-
-#Names for secondary hardware devices, for cases were primary device may have been malfunctioning
-
-pos_secondary <- "USBL_300-564"
-depth_secondary <- "ROV_Heading_Depth_UTurns"
-
-
-#################################STEP 2- CHECK AND MAKE DIRECTORIES AS NEEDED #################################
-
-#Working directory for location of Hypack .RAW files
-
-Hypack_input <- paste0(project_folder, "/Data/Hypack_Backup/Raw")
-
-#Directory for the location of the Dive Log
-
-Log_path <- paste0(project_folder,"/Data/Dive_Logs")
-
-#Directory for saving both clipped and unclipped .CSV files
-
+# Create directory for saving both clipped and unclipped .CSV files
 save_dir <- paste0(project_folder, "/Data/Initial_Processed_Data")
+dir.create(save_dir, recursive = TRUE) # Will warn if already exists
 
-#Vector of directories to check for
 
-dirs <- c(Hypack_input, Log_path, save_dir)
 
-#Check and create directories as needed.
+#===============================================================================
+# STEP 2 - SET HYPACK RAW FILE DATA STREAM SOURCES
 
-for(i in unique(dirs))
-{
-  if(dir.exists(i) == FALSE)
-  {
-    dir.create(i, recursive = TRUE)
+# Device types to extract data from
+device_types <- c("POS","EC1","HCP","GYR","DFT")
+
+# Set column names for position, depth, heading, draft and heave data sources. 
+# Must match the names as listed in hardware devices. If a device is not present, 
+# write NULL. MAKE SURE DEVICE NAMES MATCH .RAW FILES 
+ship_heading_pref <- "Hemisphere_GPS" # DEV 0 
+GPS_pref <- "Hemisphere_GPS" # DEV 0
+depth_pref <- "RBR_CTD_Depth" # DEV 2
+pos_pref <- "USBL_4370_Wide" # DEV 4
+phantom_heading_pref <- "ROV_Heading_Depth_UTurns" # Dev 5
+speed_pref <- "ROWETech_DVL" # Dev 6
+altitude_pref <- "ROWETech_DVL" # Dev 6
+slant_pref <- "Tritech_Slant_Range" # Dev 8
+rogue_cam_pref <- "Rogue_IMU_Pitch_Roll" # Dev 10
+
+# Set names for secondary hardware devices, for cases were primary device may 
+# be malfunctioning
+pos_secondary <- "USBL_300-506" # Dev 7 "USBL_300-564"
+depth_secondary <- "ROV_Heading_Depth_UTurns" # Dev 5
+
+
+
+#===============================================================================
+# STEP 3 - READ IN RAW DATA
+
+# Lists Hypack files, apply function to extract data on list of files, combine
+# extracted data into a single dataframe for entire cruise.
+
+
+# Function to extract data from hypack file
+extractHypack <- function( hfile ){
+  
+  # Read in lines from hypack files
+  hlines <- readLines(hfile)
+  
+  # Extract device info 
+  # Question: Could grep OFF offset info as well, could that be important?
+  dev <- hlines[grepl("DEV", hlines)]
+  dev <- gsub("\"", "", dev) %>% strsplit(., " ") %>% 
+    do.call(rbind, .) %>% as.data.frame()
+  # Only need columns 2 and 4
+  dev <- dev[,c("V2","V4")] 
+  
+  # Extract UTM Zone
+  # From the 3rd column of line 5
+  longitude <- hlines[5] %>% strsplit(., " ") %>% 
+    unlist() %>% .[3] %>% as.numeric()
+  # Get UTM zone based on longitude
+  zone <- NA
+  zone[longitude == -123] <- 10
+  zone[longitude == -129] <- 9
+  zone[longitude == -135] <- 8
+  # Check
+  if(is.na(zone)) warning("Longitude does not match UTM zone 8, 9  or 10", 
+                          call.= FALSE)
+  
+  # Extract start day
+  # from the 3rd column of line 9
+  day <- hlines[9] %>% strsplit(., " ") %>% 
+    unlist() %>% .[3] 
+  
+  # Extract data stream
+  # Start after EOH line
+  startline <- which(grepl("EOH", hlines)) + 1
+  ds_lines <- hlines[startline:length(hlines)]
+  # Only include lines with device_types set in STEP 2
+  ds_lines <- ds_lines[grepl(paste0(device_types, collapse = "|"), ds_lines)]
+  # rbind lines together in dataframe, fills in blanks with NA
+  ds_list <-  ds_lines %>% strsplit(., " ") 
+  ds <- map(ds_list, ~ c(X=.)) %>% bind_rows(.) %>% as.data.frame()
+  # Format columns
+  ds$X3 <- as.integer(ds$X3)
+  ds$X4 <- as.numeric(ds$X4) 
+  ds$X5 <- as.numeric(ds$X5)
+  ds$X6 <- as.numeric(ds$X6)
+  # Add datetime field
+  # Date formated as m/d/y in raw files
+  ds$Datetime <- ymd_hms(mdy(day) + seconds(ds$X3))
+  # Adjust datetime for second day if needed
+  if ( any(ds$X3 < ds$X3[1]) ){
+    ds$Datetime[ds$X3 < ds$X3[1]] <- ymd_hms((mdy(day)+1) + seconds(ds$X3[ds$X3 < ds$X3[1]]))
   }
+  
+  # Merge device and data stream tables.
+  dat <- merge(dev, ds, by.x = "V2", by.y = "X2")
+  names(dat)[1:3] <- c("ID", "Device", "Device_type")
+  # Add UTM zone field
+  dat$Zone <- zone
+  
+  # Return
+  return(dat)
 }
 
+# List of hypack files
+input_files <- list.files(pattern = ".RAW", path = hypack_path, full.names = T)
 
-################################STEP 3 - READ IN DATA##########################################################
-
-#Files use a single space as a delimeter. Metadata in first 9 lines does not contain sufficient columns, so for now,
-#it is skipped. No header row. Read in RAW file exports; loop through all files in the Hypack .RAW directory, 
-#and merge them into one file with all the data for a cruise.
-
-#This loop reads in the data into a data frame called 'name', the date for each .RAW file into a DF named 'day and
-#the device name into a DF named 'dev'. All three DFs are bound together, and then each file is add to a master 
-#'all_input' file. Column types for each read is component are defined explicitly, to expedite the read in process.
-
-######################################################################################################
-
-all_input <- data.frame() #Empty DF to fill with data rows.
-dev <- data.frame() #Empty DF to fill with device names.
-
-setwd(Hypack_input)
-
-input_files <- list.files(pattern = ".RAW")
-
-for(i in 1:length(input_files))
-{
-  name <- as.character(i)
-  day <- as.character(i+1)
-  dev <- as.character(i+2)
-  zone <- as.character(i+3)
-  assign(name, read_delim(input_files[i], delim = " ", skip = 9, col_names = F, 
-                          col_types = cols(X1 = "c", X2 = "i", X3 = "c", X4 = "c", X5 = "c", X6 = "c", X7 = "c", X8 = "c"))) #Read in the data strings
-  assign(day, mdy(read_delim(input_files[i], delim = " ", skip = 8, col_names = F, n_max = 1, 
-                             col_types = cols_only(X3 = "c")))) #Read in the line in the .RAW file that contains the date, format it as such.
-  assign(dev, read_delim(input_files[i], delim = " ", skip = 9, col_names = F, n_max = 50,
-                         col_types = cols_only(X1 = "c", X2 = "i", X4 = "c"))) #Read in the lines with DEV; read enough lines to capture 20 or more devices.
-  assign(zone, read_delim(input_files[i], delim = " ", col_names = F, skip = 4, n_max = 1, col_types = cols_only(X3 = "c"))) #Read in only column 3, which contains the information on the prime meridian of the UTM zone that was set at the time of data collection.
-  name <- filter(get(name), X1 =="POS"| X1 == "EC1"| X1 == "HCP" | X1 == "GYR" | X1 == "DFT") #Filter to data records only
-  name$X3 <- as.integer(name$X3)
-  first_record <- name$X3[1]
-  start_day <- get(day) #Get the day value
-  next_day <- as.character(start_day + 1) #Get the next day value, as a character.
-  start_day <- as.character(start_day) #Convert the first day value to a character.
-  name$day_num[name$X3 >= first_record] <- start_day #If the seconds are less than or equal to the seconds value of the first record, use the starting day.
-  name$day_num[name$X3 < first_record] <- next_day #If higher second cound than first record, increment the day by one.
-  dev <- filter(get(dev), X1 == "DEV")
-  name <- merge(name, dev, by.x = "X2", by.y = "X2") #Merge the device names with the data.
-  name <- name[,c(1:5,9,11)] #Drop columns X6 to X8, which are all NAs. Keep day column and device
-  name$zone <- NA #Create an empty column at the end of the 'name' dataframe, to store UTM zone values.
-  prime_meridian <- get(zone)
-  name$zone <- as.integer(prime_meridian) #Fill in the zone column with the value of the prime meridian.
-  names(name) <- c("X1","X2","X3","X4","X5","date","device","zone") #Rename the columns
-  name$X4 <- as.numeric(name$X4) 
-  name$X5 <- as.numeric(name$X5)
-  name$sort <- paste0(as.character(name$X2), as.character(name$X3), #A column of unique values to sort by.
-                      name$device,as.character(name$date)) 
-  name <- name[!duplicated(name$sort),] #Remove duplicates based on sort column values.
-  name <- name[, c(1:8)] #Drop the sort column.
-  
-  all_input <- bind_rows(all_input, name)
-  
-  
-  rm(list = c(i))
-}
-rm(name)
-
-#Convert the seconds after midnight to a ymd_hms() value. 
-
-all_input$date <- ymd(all_input$date)
-all_input$date_time <- ymd_hms(all_input$date + seconds(all_input$X3))
-
-#Convert the prime meridian values to UTM Zone numbers.
-all_input$zone[all_input$zone == -123] <- 10
-all_input$zone[all_input$zone == -129] <- 9
-all_input$zone[all_input$zone == -135] <- 8
+# Apply function across list of input files
+all_list <- lapply( input_files, FUN=extractHypack )
+all_input <- do.call("rbind", all_list)
 
 
-################################STEP 4 - READ IN DIVE LOG AND TRIM THE FILE TO TRANSECT START AND END TIMES#########################
 
-#Read in the start and end time from the Dive Log
+#===============================================================================
+# STEP 4 - READ IN DIVE LOG AND TRIM THE FILE TO TRANSECT START AND END TIMES
 
-log <- read_xlsx(paste(Log_path, list.files(Log_path, pattern = ".xlsx"), sep ="/"), sheet = "Start_End_Times")
+# Read in the start and end time from the Dive Log
+dlog <- read.csv(divelog_path)
 
-#Pad out the transect start/end times by 5 mins each, as requested by users
-
+# Pad out the transect start/end times by 5 mins each, as requested by users
 log$Start_time_UTC <- log$Start_time_UTC - minutes(5)
 log$End_time_UTC <- log$End_time_UTC + minutes(5)
 
