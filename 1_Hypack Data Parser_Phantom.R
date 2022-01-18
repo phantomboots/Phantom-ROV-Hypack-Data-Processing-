@@ -83,7 +83,8 @@ lapply(packages, require, character.only = TRUE)
 #===============================================================================
 # STEP 1 - SET PATHS AND MAKE EXPORT DIRECTORY
 
-# Enter Project folder name
+# Enter Project folder
+# All files should be found within a 'Data' folder within the project folder
 project_folder <- "Test"
 
 # Assign path to Hypack .RAW files
@@ -117,11 +118,11 @@ phantom_heading_pref <- "ROV_Heading_Depth_UTurns" # Dev 5
 speed_pref <- "ROWETech_DVL" # Dev 6
 altitude_pref <- "ROWETech_DVL" # Dev 6
 slant_pref <- "Tritech_Slant_Range" # Dev 8
-rogue_cam_pref <- "Rogue_IMU_Pitch_Roll" # Dev 10
+rogue_cam_pref <- "MiniZeus_ROV_IMU_Pitch_Roll" # Dev 10
 
 # Set names for secondary hardware devices, for cases were primary device may 
-# be malfunctioning
-pos_secondary <- "USBL_300-506" # Dev 7 "USBL_300-564"
+# be malfunctioning, NULL if there is no secondary
+pos_secondary <- "USBL_1000-21884" # Dev 7 "USBL_300-564"
 depth_secondary <- "ROV_Heading_Depth_UTurns" # Dev 5
 
 
@@ -184,7 +185,8 @@ extractHypack <- function( hfile ){
   ds$Datetime <- ymd_hms(mdy(day) + seconds(ds$X3))
   # Adjust datetime for second day if needed
   if ( any(ds$X3 < ds$X3[1]) ){
-    ds$Datetime[ds$X3 < ds$X3[1]] <- ymd_hms((mdy(day)+1) + seconds(ds$X3[ds$X3 < ds$X3[1]]))
+    ds$Datetime[ds$X3 < ds$X3[1]] <- ymd_hms((mdy(day)+1) + 
+                                               seconds(ds$X3[ds$X3 < ds$X3[1]]))
   }
   
   # Merge device and data stream tables.
@@ -206,44 +208,153 @@ all_input <- do.call("rbind", all_list)
 
 
 
+
 #===============================================================================
-# STEP 4 - READ IN DIVE LOG AND TRIM THE FILE TO TRANSECT START AND END TIMES
+# STEP 4 - MOVE SENSOR DATA TO INDIVIDUAL FIELDS
+
+
+# Split sensor data into individual dataframes
+
+# Depth 
+# device type == 'EC1' device type
+# primary device == depth_pref
+# secondary device == depth_secondary
+depth_data <- dat[dat$Device_type == "EC1" & dat$Device == depth_pref, 
+                  c("X4", "Datetime")]
+names(depth_data)[1] <- "Depth"
+depth_data2 <- dat[dat$Device_type == "EC1" & dat$Device == depth_secondary, 
+                   c("X4", "Datetime")]
+names(depth_data2)[1] <- "Depth2"
+
+# Heading
+# device type == 'GYR' device type
+# primary device == phantom_heading_pref
+# secondary device == ship_heading_pref
+rov_heading_data <- dat[dat$Device_type == "GYR" & dat$Device == phantom_heading_pref, 
+                        c("X4", "Datetime")]
+names(rov_heading_data)[1] <- "rov_heading"
+ship_heading_data <- dat[dat$Device_type == "GYR" & dat$Device == ship_heading_pref, 
+                         c("X4", "Datetime")]
+names(ship_heading_data)[1] <- "ship_heading"
+
+# Altitude
+# device type == 'DFT' device type
+# primary device == altitude_pref
+altitude_data <- dat[dat$Device_type == "DFT" & dat$Device == altitude_pref, 
+                     c("X4", "Datetime")]
+names(altitude_data)[1] <- "altitude"
+
+# Slant range
+# device type == 'EC1' device type
+# primary device == slant_pref
+slant_data <- dat[dat$Device_type == "EC1" & dat$Device == slant_pref, 
+                  c("X4", "Datetime")]
+names(slant_data)[1] <- "slant_range"
+
+# Speed
+# device type == 'HCP' device type
+# primary device == speed_pref
+speed_data <- dat[dat$Device_type == "HCP" & dat$Device == speed_pref, 
+                  c("X4", "Datetime")]
+names(speed_data)[1] <- "speed"
+
+# Position
+# device type == 'POS' device type
+# primary device == pos_pref
+# secondary device == pos_secondary
+position_data <- dat[dat$Device_type == "POS" & dat$Device == pos_pref, 
+                     c("X4", "X5", "Datetime", "Zone")]
+position_data2 <- dat[dat$Device_type == "POS" & dat$Device == pos_secondary, 
+                      c("X4", "X5", "Datetime", "Zone")]
+names(position_data)[1:2] <- c("Beacon_Easting","Beacon_Northing")
+names(position_data2)[1:2] <- c("Beacon_Easting","Beacon_Northing")
+
+# Ship GPS
+# device type == 'POS' device type
+# primary device == GPS_pref
+ship_GPS_data <- dat[dat$Device_type == "POS" & dat$Device == GPS_pref, 
+                     c("X4", "X5", "Datetime", "Zone")]
+names(ship_GPS_data)[1:2] <- c("Ship_Easting","Ship_Northing")
+
+# Camera pitch and roll
+# device type == 'HCP' device type
+# primary device == rogue_cam_pref
+cam_data <- dat[dat$Device_type == "HCP" & dat$Device == rogue_cam_pref, 
+                  c("X5", "X6", "Datetime")] # X4 was all zeros
+# Question: How to determine which is pitch and roll?
+names(cam_data)[1:2] <- c("roll","pitch")
+
+# Merge all together based on datetime
+
+# Make plots to check the similarity of primary and secondary data streams
+
+
+
+
+#===============================================================================
+# STEP 5 - READ IN DIVE LOG AND TRIM THE FILE TO TRANSECT START AND END TIMES
 
 # Read in the start and end time from the Dive Log
 dlog <- read.csv(divelog_path)
 
-# Pad out the transect start/end times by 5 mins each, as requested by users
-log$Start_time_UTC <- log$Start_time_UTC - minutes(5)
-log$End_time_UTC <- log$End_time_UTC + minutes(5)
-
-#Generate a second-by-second sequence of timestamps from the start to finish of the on-transect portion of each dive, coerce to DF
-#that includes the dive number. Bind sequence for all dives together into a single DF.
-
-for(h in 1:length(log$Transect_Name))
-{
-  name <- log$Transect_Name[h]
-  temp <- seq(log$Start_time_UTC[h],log$End_time_UTC[h], 1)
-  sec_seq <- data.frame(Transect_Name = name, date_time = temp)
-  if(h == 1)
-  {full_seq <- sec_seq
-  } else full_seq <- rbind(full_seq, sec_seq)
+# Check for all required fields
+dnames <- c("Dive_Name", "Transect_Name", "Start_UTC", "End_UTC")
+if( any(!dnames %in% names(dlog)) ) {
+  stop( "Missing fields in dive log: ", 
+        paste(dnames[!dnames %in% names(dlog)], collapse = ", "))
+} else {
+  # Remove all but required fields
+  dlog <- dlog[dnames]
 }
-rm(sec_seq)
 
-#Write the second by second sequence of on transect times to a .CSV, for use in later processing scripts
+# Set datetime format
+dlog$Start_UTC <- mdy_hm(dlog$Start_UTC)
+dlog$End_UTC <- mdy_hm(dlog$End_UTC)
 
-write.csv(full_seq, paste(Log_path,"Dive_Times_1Hz.csv", sep = "/"), quote = F, row.names = F)
+# Pad out the transect start/end times by 2 minutes each to ensure overlap with 
+# transect annotations
+dlog$Start_UTC_pad <- dlog$Start_UTC - minutes(2)
+dlog$End_UTC_pad <- dlog$End_UTC + minutes(2)
 
-#Merge the dive data frames and the 1 Hz sequence using a common timestamp value.
-dives_full <- left_join(full_seq, all_input, by = "date_time")
+# Crop padded times so there is no overlap between transects
+for (i in 2:nrow(dlog)){
+  if( dlog$End_UTC_pad[i-1] > dlog$Start_UTC_pad[i] ){
+    # Replace end times with non-padded times
+    dlog$End_UTC_pad[i-1] <- dlog$End_UTC[i-1]
+    # Set start time to previous endtime 
+    dlog$Start_UTC_pad[i] <- dlog$End_UTC[i-1]
+  }
+}
 
-################################STEP 5 - EXTRACT DEPTH DATA####################################################
 
-#Select rows in the first column (X1) that have a 'EC1' identifier. Keep only the data from the primary and secondary
-#depth data sources. These are the RBR CTD (primary) and onboard Phantom Depth sensor (secondary)
+# Generate a second-by-second sequence of datetimes from the start to finish 
+# of the on-transect portion of each dive. 
+slog <- NULL
+for(i in 1:nrow(dlog)){
+  name <- dlog$Transect_Name[i]
+  tmp <- data.frame(
+    Transect_Name = name, 
+    Datetime = seq(dlog$Start_UTC_pad[i],dlog$End_UTC_pad[i], 1)
+  )
+  # Bind each transect to the previous
+  slog <- rbind(slog, tmp)
+}
 
-depth_data <- filter(dives_full, X2 == "EC1" & device == depth_pref)
-depth_data2 <- filter(dives_full, X2 == "EC1" & device == depth_secondary)
+# Save for use in later processing scripts
+save(slog, file=file.path(project_folder, "Data", "Dive_Times_1Hz.RData"))
+
+# Merge the hypack processed data with the 1 Hz  dive log sequence
+#dives_full <- merge(slog, all_input, by = "Datetime", all.x=T)
+
+# Note - don't think the tables should be merged at this time
+# would be better to cast the all_input data into the sensor types first
+
+
+
+
+
+#===============================================================================
+# Extract depth
 
 
 depth_data <- depth_data[, c("date_time","Transect_Name","device","X4")]
@@ -251,7 +362,7 @@ names(depth_data) <- c("date_time","Transect_Name","device","Depth_m")
 depth_data2 <- depth_data2[, c("date_time","Transect_Name","device","X4")]
 names(depth_data2) <- c("date_time","Transect_Name","device","Depth_m")
 
-#Where its availalble, insert the depth from the primary depth data source (the CTD). If not, 
+#Where its available, insert the depth from the primary depth data source (the CTD). If not, 
 #label these rows as NA. Remove duplicates, just to be safe.
 
 depth_all <- left_join(full_seq, depth_data, by = "date_time")
@@ -280,6 +391,7 @@ for(k in 1:length(depth_all$date_time))
 depth_all <- depth_all[,c(1,4,2,3)]
 names(depth_all) <- c("date_time","Dive_Name","device","Depth_m")
 
+
 ################################STEP 6 - EXTRACT HEADING DATA###################################################
 
 #Select rows in the first column (X1) that have a 'GYR' identifier. These should heading values from 
@@ -299,6 +411,7 @@ ship_heading_data <- left_join(full_seq, ship_heading_data, by = "date_time")
 ship_heading_data <- ship_heading_data[!duplicated(ship_heading_data$date_time),]
 ship_heading_data <- ship_heading_data[, c(2,1,10,7)]
 names(ship_heading_data) <- c("date_time","Dive_Name","device","Ship_heading")
+
 
 #############################STEP 7 - SEARCH FOR ALTITUDE, EXTRACT IT IF ITS PRESENT############################
 
@@ -429,9 +542,9 @@ names(position_all) <- c("date_time","Transect_Name","device","Main_Beacon_Easti
 
 if(which(dives_full$X2 == "HCP") != 0)
 {
-  rogue_data <- filter(dives_full, X2 == "HCP" & device == rogue_cam_pref)
-  rogue_data <- left_join(full_seq, rogue_data, by = "date_time")
-  rogue_data <- rogue_data[!duplicated(rogue_data$date_time),]
+  rogue_data <- filter(dives_full, Device_type == "HCP" & Device == rogue_cam_pref)
+  rogue_data <- left_join(slog, rogue_data, by = "Datetime")
+  rogue_data <- rogue_data[!duplicated(rogue_data$Datetime),]
   rogue_data <- rogue_data[, c(2,1,10,7,8)]
   names(rogue_data) <- c("date_time","Transect_Name","device","roll","pitch")
 }
