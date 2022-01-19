@@ -67,7 +67,7 @@
 # Set up
 
 # Check for the presence of packages shown below, install if needed
-packages <- c("lubridate", "sp", "readxl", "readr",
+packages <- c("lubridate", "sp", "readxl", "readr", "purrr",
               "dplyr", "stringr", "rgdal", "zoo")
 new_packages <- packages[!(packages %in% installed.packages()[,"Package"])]
 if(length(new_packages)) install.packages(new_packages)
@@ -190,13 +190,13 @@ extractHypack <- function( hfile ){
   }
   
   # Merge device and data stream tables.
-  dat <- merge(dev, ds, by.x = "V2", by.y = "X2")
-  names(dat)[1:3] <- c("ID", "Device", "Device_type")
+  alldat <- merge(dev, ds, by.x = "V2", by.y = "X2")
+  names(alldat)[1:3] <- c("ID", "Device", "Device_type")
   # Add UTM zone field
-  dat$Zone <- zone
+  alldat$Zone <- zone
   
   # Return
-  return(dat)
+  return(alldat)
 }
 
 # List of hypack files
@@ -204,18 +204,22 @@ input_files <- list.files(pattern = ".RAW", path = hypack_path, full.names = T)
 
 # Apply function across list of input files
 all_list <- lapply( input_files, FUN=extractHypack )
-all_input <- do.call("rbind", all_list)
+dat <- do.call("rbind", all_list)
 
 
 
 
 #===============================================================================
-# STEP 4 - MOVE SENSOR DATA TO INDIVIDUAL FIELDS
+# STEP 4 - PROCESS SENSOR DATA
+
+# Split sensor data into individual dataframes, process, then merge together, so
+# there is a field for each data type (e.g. depth, heading, etc.) in the final
+# data frame.
 
 
-# Split sensor data into individual dataframes
-
-# Depth 
+#=============#
+#    Depth    #
+#=============#
 # device type == 'EC1' device type
 # primary device == depth_pref
 # secondary device == depth_secondary
@@ -225,8 +229,85 @@ names(depth_data)[1] <- "Depth"
 depth_data2 <- dat[dat$Device_type == "EC1" & dat$Device == depth_secondary, 
                    c("X4", "Datetime")]
 names(depth_data2)[1] <- "Depth2"
+# Merge depths together with datetime
+depths <- merge(depth_data, depth_data2, by="Datetime", all=T)
+# Assign NA to all negative values
+depths$Depth[ depths$Depth < 0 ] <- NA
+depths$Depth2[ depths$Depth2 < 0 ] <- NA
+# Convert Depth 2 from feet to meters
+# Question: This was not done in previous version, should depth_secondary be in meters? 
+depths$Depth2 <- depths$Depth2 * 3.28084
+# Remove duplicated
+depths <- depths[!duplicated(depths$Datetime),]
+# Plot, look for tight relationship between depth sensors
+plot(depths$Depth, depths$Depth2)
+abline(a=0, b=1, col="red")
+# Use depth_secondary to fill in gaps in depth_pref where possible
+depths$Depth <- ifelse( is.na(depths$Depth), depths$Depth2, depths$Depth )
+# Summary
+summary(depths)
 
-# Heading
+
+#==================#
+#   ROV Position   #
+#==================#
+# device type == 'POS' device type
+# primary device == pos_pref
+# secondary device == pos_secondary
+position_data <- dat[dat$Device_type == "POS" & dat$Device == pos_pref, 
+                     c("X4", "X5", "Datetime", "Zone")]
+names(position_data)[1:2] <- c("Beacon_Easting","Beacon_Northing")
+position_data2 <- dat[dat$Device_type == "POS" & dat$Device == pos_secondary, 
+                      c("X4", "X5", "Datetime", "Zone")]
+names(position_data2)[1:2] <- c("Beacon_Easting2","Beacon_Northing2")
+# Sort primary by Datetime
+position_data <- position_data[order(position_data$Datetime),]
+# Calculate gap time in seconds between primary position records 
+position_data$gaps <- c( difftime(tail(position_data$Datetime, -1), 
+                                        head(position_data$Datetime, -1)), 0 )
+
+# Merge primary and secondary depths together using datetime and zone
+positions <- merge(position_data, position_data2, by=c("Datetime","Zone"), all=T)
+# Remove duplicated
+positions <- positions[!duplicated(positions$Datetime),]
+# Plot, look for tight relationship between position sensor data
+# Primary v secondary
+plot(positions$Beacon_Easting, positions$Beacon_Easting2)
+abline(a=0, b=1, col="red")
+plot(positions$Beacon_Northing, positions$Beacon_Northing2)
+abline(a=0, b=1, col="red")
+
+# Replace primary with secondary when primary is NA for more than 60 seconds
+positions$gaps <- na.locf(positions$gaps, fromLast = FALSE)
+positions$Beacon_Northing <-ifelse( positions$gaps > 60 & 
+                                      is.na(positions$Beacon_Northing), 
+                                     positions$Beacon_Northing2, 
+                                     positions$Beacon_Northing )
+positions$Beacon_Easting <- ifelse( positions$gaps > 60 & 
+                                      is.na(positions$Beacon_Easting), 
+                                    positions$Beacon_Easting2, 
+                                    positions$Beacon_Easting )
+# Summary
+summary(positions)
+
+
+#===================#
+#   Ships Position  #
+#===================#
+# device type == 'POS' device type
+# primary device == GPS_pref
+ship_GPS_data <- dat[dat$Device_type == "POS" & dat$Device == GPS_pref, 
+                     c("X4", "X5", "Datetime")]
+names(ship_GPS_data)[1:2] <- c("Ship_Easting","Ship_Northing")
+# Remove duplicated
+ship_gps <- ship_GPS_data[!duplicated(ship_GPS_data$Datetime),]
+# Summary
+summary(ship_gps)
+
+
+#=============#
+#   Heading   #
+#=============#
 # device type == 'GYR' device type
 # primary device == phantom_heading_pref
 # secondary device == ship_heading_pref
@@ -236,63 +317,105 @@ names(rov_heading_data)[1] <- "rov_heading"
 ship_heading_data <- dat[dat$Device_type == "GYR" & dat$Device == ship_heading_pref, 
                          c("X4", "Datetime")]
 names(ship_heading_data)[1] <- "ship_heading"
+# Merge headings together with datetime
+headings <- merge(rov_heading_data, ship_heading_data, by="Datetime", all=T)
+# Assign NA to all negative values
+headings$rov_heading[ headings$rov_heading < 0 ] <- NA
+headings$ship_heading[ headings$ship_heading < 0 ] <- NA
+# Remove duplicated
+headings <- headings[!duplicated(headings$Datetime),]
+# Summary
+summary(headings)
 
-# Altitude
+
+#=============#
+#   Altitude  #
+#=============#
 # device type == 'DFT' device type
 # primary device == altitude_pref
 altitude_data <- dat[dat$Device_type == "DFT" & dat$Device == altitude_pref, 
                      c("X4", "Datetime")]
 names(altitude_data)[1] <- "altitude"
+# Assign NA to all negative values
+altitude_data$altitude[ altitude_data$altitude < 0 ] <- NA
+# Remove duplicated
+altitude <- altitude_data[!duplicated(altitude_data$Datetime),]
+# Summary
+summary(altitude)
 
-# Slant range
+
+#=============#
+#    Slant    #
+#=============#
 # device type == 'EC1' device type
 # primary device == slant_pref
 slant_data <- dat[dat$Device_type == "EC1" & dat$Device == slant_pref, 
                   c("X4", "Datetime")]
 names(slant_data)[1] <- "slant_range"
+# Assign NA to all negative values
+slant_data$slant_range[ altitude_data$slant_range < 0 ] <- NA
+# Remove duplicated
+slant <- slant_data[!duplicated(slant_data$Datetime),]
+# Summary
+summary(slant)
 
-# Speed
+
+#=============#
+#    Speed    #
+#=============#
 # device type == 'HCP' device type
 # primary device == speed_pref
 speed_data <- dat[dat$Device_type == "HCP" & dat$Device == speed_pref, 
                   c("X4", "Datetime")]
 names(speed_data)[1] <- "speed"
+# Assign NA to all negative values
+speed_data$speed[ speed_data$speed < 0 ] <- NA
+# Remove duplicated
+speed <- speed_data[!duplicated(speed_data$Datetime),]
+# Summary
+summary(speed)
 
-# Position
-# device type == 'POS' device type
-# primary device == pos_pref
-# secondary device == pos_secondary
-position_data <- dat[dat$Device_type == "POS" & dat$Device == pos_pref, 
-                     c("X4", "X5", "Datetime", "Zone")]
-position_data2 <- dat[dat$Device_type == "POS" & dat$Device == pos_secondary, 
-                      c("X4", "X5", "Datetime", "Zone")]
-names(position_data)[1:2] <- c("Beacon_Easting","Beacon_Northing")
-names(position_data2)[1:2] <- c("Beacon_Easting","Beacon_Northing")
 
-# Ship GPS
-# device type == 'POS' device type
-# primary device == GPS_pref
-ship_GPS_data <- dat[dat$Device_type == "POS" & dat$Device == GPS_pref, 
-                     c("X4", "X5", "Datetime", "Zone")]
-names(ship_GPS_data)[1:2] <- c("Ship_Easting","Ship_Northing")
-
-# Camera pitch and roll
+#===============#
+#   Pitch/roll  #
+#===============#
 # device type == 'HCP' device type
 # primary device == rogue_cam_pref
 cam_data <- dat[dat$Device_type == "HCP" & dat$Device == rogue_cam_pref, 
-                  c("X5", "X6", "Datetime")] # X4 was all zeros
+                c("X5", "X6", "Datetime")] # X4 was all zeros
 # Question: How to determine which is pitch and roll?
 names(cam_data)[1:2] <- c("roll","pitch")
+# Remove duplicated
+pitchroll <- cam_data[!duplicated(cam_data$Datetime),]
+# Summary
+summary(pitchroll)
 
+
+#=============#
+#   Combine   #
+#=============#
 # Merge all together based on datetime
+df_list <- list(positions[c("Datetime","Zone", "Beacon_Easting", "Beacon_Northing")], 
+                ship_gps, depths[c("Datetime","Depth")], headings, altitude, 
+                slant, speed, pitchroll)
+sdat <- Reduce(function(x, y) merge(x, y, by="Datetime", all=TRUE), df_list, 
+               accumulate=FALSE)
+summary(sdat)
 
-# Make plots to check the similarity of primary and secondary data streams
+# Sort by Datetime
+sdat <- sdat[order(sdat$Datetime),]
+
+# Check relationship between ship and rov position
+plot(sdat$Beacon_Easting, sdat$Ship_Easting, asp=1)
+abline(a=0, b=1, col="red")
+plot(sdat$Beacon_Northing, sdat$Ship_Northing, asp=1)
+abline(a=0, b=1, col="red")
 
 
 
 
 #===============================================================================
-# STEP 5 - READ IN DIVE LOG AND TRIM THE FILE TO TRANSECT START AND END TIMES
+# STEP 5 - READ IN DIVE LOG AND MERGE WITH SENSOR DATA
 
 # Read in the start and end time from the Dive Log
 dlog <- read.csv(divelog_path)
@@ -326,7 +449,6 @@ for (i in 2:nrow(dlog)){
   }
 }
 
-
 # Generate a second-by-second sequence of datetimes from the start to finish 
 # of the on-transect portion of each dive. 
 slog <- NULL
@@ -339,215 +461,27 @@ for(i in 1:nrow(dlog)){
   # Bind each transect to the previous
   slog <- rbind(slog, tmp)
 }
-
 # Save for use in later processing scripts
 save(slog, file=file.path(project_folder, "Data", "Dive_Times_1Hz.RData"))
 
+
 # Merge the hypack processed data with the 1 Hz  dive log sequence
-#dives_full <- merge(slog, all_input, by = "Datetime", all.x=T)
+# Removes senor data that is not on-transect
+alldat <- merge(slog, sdat, by = "Datetime", all.x=T)
 
-# Note - don't think the tables should be merged at this time
-# would be better to cast the all_input data into the sensor types first
-
-
-
+# Save for use in later processing scripts
+save(alldat, file=file.path(project_folder, "Data", "SensorData_onTransects.RData"))
 
 
-#===============================================================================
-# Extract depth
+# To do
+# - Makes sense to do the interpolation to fill in gaps at this point before 
+#   converting to lat and long with NA values
+# - All meter values within a transect should be in the same UTM zone, so there
+#   will be no issue with different crs
+# - Check other scripts first - script 2 gets other data that is used in the 
+#   interpolation in script 3
 
 
-depth_data <- depth_data[, c("date_time","Transect_Name","device","X4")]
-names(depth_data) <- c("date_time","Transect_Name","device","Depth_m")
-depth_data2 <- depth_data2[, c("date_time","Transect_Name","device","X4")]
-names(depth_data2) <- c("date_time","Transect_Name","device","Depth_m")
-
-#Where its available, insert the depth from the primary depth data source (the CTD). If not, 
-#label these rows as NA. Remove duplicates, just to be safe.
-
-depth_all <- left_join(full_seq, depth_data, by = "date_time")
-depth_all <- depth_all[!duplicated(depth_all$date_time),]
-depth_all <- depth_all[, c(2:5)] #Keep only the relevant columns
-
-#Insert the secondary depth data source in a seperate column, adjacent to the primary depth source.
-
-depth_all <- left_join(depth_all, depth_data2, by = "date_time")
-depth_all <- depth_all[!duplicated(depth_all$date_time),]
-depth_all <- depth_all[, c(1,3:7)] #Keep only the relevant columns
-
-#Loop through the elements of depth_all, where the there are no depth records from the CTD, fill in with depth records from the Deep Ocean Engineering depth sensor.
-#if there are no records from either devices, the depth_all value will remains as NA.
-
-for(k in 1:length(depth_all$date_time))
-{
-  if(is.na(depth_all$Depth_m.x[k]))
-  {depth_all$Depth_m.x[k] <- depth_all$Depth_m.y[k]
-  depth_all$device.x[k] <- depth_all$device.y[k]
-  }
-}
-
-#Keep only required columns, and rename them.
-
-depth_all <- depth_all[,c(1,4,2,3)]
-names(depth_all) <- c("date_time","Dive_Name","device","Depth_m")
-
-
-################################STEP 6 - EXTRACT HEADING DATA###################################################
-
-#Select rows in the first column (X1) that have a 'GYR' identifier. These should heading values from 
-#the ship's GPS source, as well as the onboard compass. 
-
-phantom_heading_data <- filter(dives_full, X2 == "GYR" & device == phantom_heading_pref) 
-ship_heading_data <- filter(dives_full, X2 == "GYR" & device == ship_heading_pref)
-
-#First, get the BOOTS heading data.
-phantom_heading_data <- left_join(full_seq, phantom_heading_data, by = "date_time")
-phantom_heading_data <- phantom_heading_data[!duplicated(phantom_heading_data$date_time),]
-phantom_heading_data <- phantom_heading_data[, c(2,1,10,7)]
-names(phantom_heading_data) <- c("date_time","Dive_Name","device","Phantom_heading")
-
-#Next, get the ship heading data
-ship_heading_data <- left_join(full_seq, ship_heading_data, by = "date_time")
-ship_heading_data <- ship_heading_data[!duplicated(ship_heading_data$date_time),]
-ship_heading_data <- ship_heading_data[, c(2,1,10,7)]
-names(ship_heading_data) <- c("date_time","Dive_Name","device","Ship_heading")
-
-
-#############################STEP 7 - SEARCH FOR ALTITUDE, EXTRACT IT IF ITS PRESENT############################
-
-#The Phantom's altitude is read in as 'draft' data source, and is output by the ROWETech DVL. Select altitude device ID (DFT), then
-#select the prefered altitude device. No substitute device, so those rows that are missing data will retain NA values.
-
-if(which(dives_full$X2 == "DFT") != 0) #Check to see if any altitude data is present, before proceeding further.
-{
-altitude_data <- filter(dives_full, X2 == "DFT" & device == altitude_pref)
-altitude_data <- left_join(full_seq, altitude_data, by = "date_time")
-altitude_data <- altitude_data[!duplicated(altitude_data$date_time),]
-altitude_data <- altitude_data[, c(2,1,10,7)]
-names(altitude_data) <- c("date_time","Transect_Name","device","altitude_m")
-}
-
-#If the altitude is 0 m, this indicates an out of range reading. Substitute in -9999 for these cases.
-altitude_data$altitude_m[altitude_data$altitude_m == 0] <- -9999
-
-#####################################STEP 8 - EXTRACT MINIZEUS SLANT RANGE######################################
-
-#Phantom slant range altitude is read in as a depth data source, through the Tritech Altimeter. Select depth device ID (EC1), then
-#select the prefered slant_range device. No substitute device, so those rows that are missing data will retain NA values.
-#Remove values of 0 and 9.99, which are errors or out of range.
-
-
-slant_data <- filter(dives_full, X2 == "EC1" & device == slant_pref)
-slant_data <- filter(slant_data, X4 > 0 & X4 < 9.99) 
-slant_data <- left_join(full_seq, slant_data, by = "date_time")
-slant_data <- slant_data[!duplicated(slant_data$date_time),]
-slant_data <- slant_data[, c(2,1,10,7)]
-names(slant_data) <- c("date_time","Transect_Name","device","slant_range_m")
-
-
-###################STEP 9 - SEARCH FOR SPEED DATA; EXTRACT IT IF IT'S PRESENT################################
-
-#Search for rows in the first column (X1) that have a 'HCP' identifier. These are heave, pitch and roll values
-#Only interested in the heave values have been used as place holders for speed, since Hypack does not have a
-#speed variable. This can include heave from a DVL, as well a from onboard IMU devices (i.e. Cyclops HPR sensor).
-#Here, we are extracting only the speed data from the ROWETECH DVL.
-
-if(which(dives_full$X2 == "HCP") != 0)
-{
-  speed_data <- filter(dives_full, X2 == "HCP" & device == speed_pref)
-  speed_data <- filter(speed_data, X4 > 0 & X4 < 9.99) 
-  speed_data <- left_join(full_seq, speed_data, by = "date_time")
-  speed_data <- speed_data[!duplicated(speed_data$date_time),]
-  speed_data <- speed_data[, c(2,1,3,10,7)]
-  names(speed_data) <- c("date_time","Transect_Name","device","speed_kts")
-}
-
-#If the speed is -99.9999 m or 0, this indicates an out of range reading. Substitute in -9999 for these cases.
-speed_data$speed_kts[slant_data$speed_kts == -99.999] <- -9999
-speed_data$speed_kts[slant_data$speed_kts == 0] <- -9999
-
-################################STEP 10 - EXTRACT POSITION DATA FOR BEACONS#######################################
-
-#Select rows in the first column (X1) that have a 'POS' identifier. Keep only the preffered and secondary POS devices
-#If the prefferd source is unavailable, use the secondary source to fill larger gaps. If there is a gap of only 1 or 2 seconds
-#ignore it. Focus on gaps larger then 60 secs; fill these in with the secondary position source (secondary Phantom beacon) 
-#where possible. If  there is no secondary position source, leave as NA and deal with this in further post-processings steps.
-
-position_data <- filter(dives_full, X2 == "POS" & device == pos_pref)
-position_data2 <- filter(dives_full, X2 == "POS" & device == pos_secondary)
-
-
-position_data <- position_data[, c(2,1,9,6,7,10)]
-names(position_data) <- c("date_time","Transect_Name", "device","Beacon_Easting","Beacon_Northing","zone")
-position_data2 <- position_data2[, c(2,1,9,6,7,10)]
-names(position_data2) <- c("date_time","Transect_Name","device","Beacon_Easting","Beacon_Northing","zone")
-
-#Where its availalble, insert the position from the primary position data source (the CTD). If not, 
-#label these rows as NA. Remove duplicated just to be safe.
-
-position_all <- left_join(full_seq, position_data, by = "date_time")
-position_all <- position_all[!duplicated(position_all$date_time),]
-
-#Insert the secondary position data source in a seperate column, adjacent to the primary depth source.
-
-position_all <- left_join(position_all, position_data2, by = "date_time")
-position_all <- position_all[!duplicated(position_all$date_time),]
-
-#Find sequences where the primary transponder's position is missing for more than 60 seconds.
-
-gaps <- rle(is.na(position_all[,5])) #Search for NA values in column 5, the easting values for the primary beacon.
-gaps$values <- gaps$values & gaps$lengths >= 60 #This line searches for more than 60 NA values in a row.
-position_all$gaps <- inverse.rle(gaps) #Put the TRUE/FALSE indices back into the data frame.
-
-#Loop through the elements of position_all, where the there are no position records from the primary transponder for large GAP period,
-#fill in with depth records from the Ship"s GPS. Do the same for the zone field, so that zone numbers from the secondary transponder fill in 
-#any blanks in the primary transponder recorders where needed.
-
-for(k in 1:length(position_all$date_time))
-{
-  if(position_all$gaps[k] == T) #If there is no Lat, there will be no Long either, so just have to search for one of the two
-  {position_all$Easting.x[k] <- position_all$Easting.y[k]
-  position_all$Northing.x[k] <- position_all$Northing.y[k]
-  position_all$device.x[k] <- position_all$device.y[k]
-  position_all$zone.x[k] <- position_all$zone.y[k] #Fill in zone numbers where required.
-  }
-}
-
-position_all <- position_all[,c(2,1,4:6,10,11,13,7)]
-names(position_all) <- c("date_time","Transect_Name","device","Main_Beacon_Easting","Main_Beacon_Northing",
-                         "Secondary_Beacon_Easting","Secondary_Beacon_Northing","Gaps","zone")
-
-####################################STEP 11 - EXTRACT SHIP GPS POSITION#############################################
-
-ship_GPS_data <- filter(dives_full, X2 == "POS" & device == GPS_pref)
-ship_GPS_data <- left_join(full_seq, ship_GPS_data, by = "date_time")
-ship_GPS_data <- ship_GPS_data[!duplicated(ship_GPS_data$date_time),]
-ship_GPS_data <- ship_GPS_data[, c(2,1,10,7:8,11)]
-names(ship_GPS_data) <- c("date_time","Transect_Name","device","Ship_Easting","Ship_Northing","zone")
-
-#Join to the position_all data frame
-position_all <- left_join(position_all, ship_GPS_data, by = "date_time")
-position_all <- position_all[,c(1:7,12,13,8,14)]
-
-#Rename columns. NOTE, we are now using the zone column from the Ship GPS data set, which should be the most comprehensive.
-#OK to do this, since the Ship and the ROV are always going to be in the same UTM zone as each other.
-names(position_all) <- c("date_time","Transect_Name","device","Main_Beacon_Easting","Main_Beacon_Northing",
-                         "Secondary_Beacon_Easting","Secondary_Beacon_Northing","Ship_Easting","Ship_Northing","Gaps","zone")
-
-###################STEP 12 - SEARCH FOR ROGUE CAM PITCH AND ROLL DATA; EXTRACT IT IF IT'S PRESENT################################
-
-#Search for rows in the first column (X1) that have a 'HCP' identifier. These are heave, pitch and roll values
-#This can include heave from a DVL, as well a from onboard IMU devices (i.e. Rogue Cam pitch and roll sensor).
-#Here, we are extracting only the speed data from the ROWETECH DVL.
-
-if(which(dives_full$X2 == "HCP") != 0)
-{
-  rogue_data <- filter(dives_full, Device_type == "HCP" & Device == rogue_cam_pref)
-  rogue_data <- left_join(slog, rogue_data, by = "Datetime")
-  rogue_data <- rogue_data[!duplicated(rogue_data$Datetime),]
-  rogue_data <- rogue_data[, c(2,1,10,7,8)]
-  names(rogue_data) <- c("date_time","Transect_Name","device","roll","pitch")
-}
 
 
 ######################STEP 13 - CONVERT THE POSITION DATA TO DECIMAL DEGREES####################################
