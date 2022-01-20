@@ -1,129 +1,124 @@
-#=====================================================================================================
+#===============================================================================
 # Script Name: 3_QAQC_Interpolation__Offset_and_Data_Smoothing.R
-# Script Function: This script reads in the .CSV files created from "1_Hypack Data Parser_****.R', "2_ASDL Data Processing.R' and
-#                  "2b_Manual Beacon Position Calculator.R". It fills in the best position and depth data source for each dive, and 
-#                 interpolates Lat/Longs for Ship GPS position and vehicle beacon. Next, distance to GPS track is calculated for each
-#                 beacon point, and points outside of median+1.5*IQR are identified as outliers, and beacon fixes at these time points 
-#                 are removed. Beacon positions are interpolated a second time (with outliers removed). Beacon positions are then 
-#                 smoothed using a rolling median (overlapping medians), using stats::runmed(). Bandwidth is set in the 'EDIT THESE DATA'
-#                 portion of these scripts. Final data for each dive are written to .CSV at the end of this script.
+# Function: This script reads in the .CSV files created from "1_Hypack Data 
+#           Parser_****.R', "2_ASDL Data Processing.R' and"2b_Manual Beacon 
+#           Position Calculator.R". It fills in the best position and depth data 
+#           source for each dive, and interpolates Lat/Longs for Ship GPS 
+#           position and vehicle beacon. Next, distance to GPS track is 
+#           calculated for each beacon point, and points outside of median+1.5 *
+#           IQRare identified as outliers, and beacon fixes at these time points 
+#           are removed. Beacon positions are interpolated a second time (with 
+#           outliers removed). Beacon positions are then smoothed using a 
+#           rolling median (overlapping medians), using stats::runmed(). 
+#           Bandwidth is set in the 'EDIT THESE DATA' portion of these scripts. 
+#           Final data for each dive are written to .CSV.
 #
 # Script Author: Ben Snow
 # Script Date: Sep 9, 2019
 # R Version: 3.5.1
 #
-######################################################################################################
-#                                            CHANGE LOG                                              #
-######################################################################################################
+################################################################################
+#                                    CHANGE LOG                                #
+################################################################################
 #
-# May 13, 2020: Based on conversations with J.Nephin and S. Humphries, decided to add linear interpolation of the depth 
-#               data stream. Depth record completion now checks again ASDL to see if additional data records can be found.
-#
-# May 24, 2020: Added a check to see if there were additional records that could be recovered from ASDL for Altitude and Slant Range.
-#               FOR 2019 ONLY, added loop to pull Bottom_Velocity_Y (forward velocity). For some dives in 2019, the 3D dimensional velocity
-#               had been recorded by Hypack, rather then simply foward velocity. Added linear interpolation of Slant Range and Altitude, but only
-#               for cases where there is just one NA value in a row. This is done by setting zoo::na.approx(..., maxgap = 1).
-# June 3, 2020: Reworked the initial loop that checks ASDL to replace NA values from the Hypack read-in. This was previously
-#               only working properly for the positional data streams (it checked that GAPS == T for all data, not just position)
-#
-# June 3, 2020: In some cases, interpolation of a -9999 and a normal Altitude or Slant Range values produced values in the range of -4000 or
-#               -5000. These is now a check against this, and values are reset to -9999 after interpolation.
-#
-# July 2, 2020: Removed the portion of this script that was previously used to generate .KML and .SHP files, and put it in a new script called
+# May 13, 2020: Based on conversations with J.Nephin and S. Jeffery, decided to 
+#               add linear interpolation of the depth data stream. Depth record 
+#               completion now checks ASDL to see if additional data records can 
+#               be found.
+# May 24, 2020: Added a check to see if there were additional records that could 
+#               be recovered from ASDL for Altitude and Slant Range. FOR 2019 
+#               ONLY, added loop to pull Bottom_Velocity_Y (forward velocity). 
+#               For some dives in 2019, the 3D dimensional velocity had been 
+#               recorded by Hypack, rather then simply forward velocity. Added 
+#               linear interpolation of Slant Range and Altitude, but only for 
+#               cases where there is just one NA value in a row. This is done by 
+#               setting zoo::na.approx(..., maxgap = 1).
+# June 3, 2020: Reworked the initial loop that checks ASDL to replace NA values 
+#               from the Hypack read-in. This was previously only working 
+#               properly for the positional data streams (it checked that GAPS 
+#               == T for all data, not just position)
+# June 3, 2020: In some cases, interpolation of a -9999 and a normal Altitude or
+#               Slant Range values produced values in the range of -4000 or 
+#               -5000. These is now a check against this, and values are reset 
+#               to -9999 after interpolation.
+# July 2, 2020: Removed the portion of this script that was previously used to 
+#               generate .KML and .SHP files, and put it in a new script called
 #               "4b_Generate_KML_and_Shapefiles.R"
-# Aug 20, 2021: Added if() statement to check if the manual beacon tracking script has been run, before trying to interpolate from this data source. If
-#               this script has not been run, skip this portion.
-#=====================================================================================================
+# Aug 20, 2021: Added if() statement to check if the manual beacon tracking 
+#               script has been run, before trying to interpolate from this data 
+#               source. If this script has not been run, skip this portion.
+################################################################################
 
-#Check if necessary packages are present, install as required.
-packages <- c("lubridate","readxl","readr","dplyr","stringr","rgdal","zoo","geosphere")
+
+
+#===============================================================================
+# Packages and session options
+
+# Check if necessary packages are present, install as required.
+packages <- c("lubridate","readxl","readr","dplyr","stringr",
+              "rgdal","zoo","geosphere")
 new_packages <- packages[!(packages %in% installed.packages()[,"Package"])]
 if(length(new_packages)) install.packages(new_packages)
 
 
-#Required packages#
-
-require(lubridate)
-require(readxl)
-require(readr)
-require(dplyr)
-require(stringr)
-require(rgdal) #This loads package sp 
-require(zoo)
-require(geosphere)
+# Load required packages
+lapply(packages, require, character.only = TRUE)
 
 
-#########################################STEP 1 - EDIT THESE DATA################################################################
+
+#===============================================================================
+# STEP 1 - SET PATHS AND SELECT OPTIONS, MAKE EXPORT DIRECTORY
 
 #Name of Ship used in the survey
-
 ship_name <- "CCGS_Vector"
 
 #Project folder name 
-
 project_folder <- "~/Projects/Apr2021_Phantom_Cruise_PAC2021_035"
 
-#Specify offsets for Ship GPS source. If more than one GPS is used, specify both sources independtely. Offset to the port side are 
-#positive values for 'GPS_abeam' and offset towards the bow are positive for 'GPS_along'.
-
+# Specify offsets for Ship GPS source. If more than one GPS is used, specify both 
+# sources independtely. Offset to the port side are positive values for 
+# 'GPS_abeam' and offset towards the bow are positive for 'GPS_along'.
 GPS_abeam <- -4.1
 GPS_along <- -12.57
 
-#Set the value to use for the 'window' size of the running median smoothing of the beacon position, at the end of this script.
-#value is in seconds.
-
+# Set the value to use for the 'window' size of the running median smoothing of 
+# the beacon position, at the end of this script. value is in seconds.
 smooth_window <- 31
 
-#Set the LOESS span values, to use when smoothing. This is a parameter that described the proportion of the total data set to
-#use when weighting, and expressed as a percentage written as a decimal. I.e. span = 0.05 would use 5% of the total data set 
-#as the local weighting window.
-
+# Set the LOESS span values, to use when smoothing. This is a parameter that 
+# described the proportion of the total data set to use when weighting, and 
+# expressed as a percentage written as a decimal. I.e. span = 0.05 would use 5% 
+# of the total data set as the local weighting window.
 loess_span = 0.05
 
-######################################## STEP 2 - CHECK FOR AND GENERATE DIRECTORIES############################################## 
 
-#Set working directory for location of Hypack .RAW files
+# Directory where the Hypack .RAW files are stored
+Hypack_input <- file.path(project_folder, "Data/Raw")
 
-Hypack_input <- paste0(project_folder,"/Data/Hypack_Backup/Raw")
+# Directory with the initial processed data
+processed_dir <- file.path(project_folder, "Data/Initial_Processed_Data")
 
-#Directory for processed dives
+# Directory with the dive log
+Log_path <- file.path(project_folder, "Data/Dive_Logs")
 
-processed_dir <- paste0(project_folder, "/Data/Initial_Processed_Data")
+# Directory with ASDL log files
+Master_ASDL <- file.path(project_folder, "Data/Advanced_Serial_Data_Logger/Full_Cruise")
 
-#Set a directory for the location of the Dive Log
+# Export directory 
+final_dir <- file.path(project_folder,"Data/Secondary_Processed_Data")
+dir.create(final_dir, recursive = TRUE) # Will warn if already exists
 
-Log_path <- paste0(project_folder,"/Data/Dive_Logs")
 
-#Path for ASDL Master Log files
-
-Master_ASDL <- paste0(project_folder, "/Data/Advanced_Serial_Data_Logger/Full_Cruise")
-
-#Path for final exports
-
-final_dir <- paste0(project_folder,"/Data/Secondary_Processed_Data")
-
-#Vector of directories to check for
-
-dirs <- c(Hypack_input, processed_dir, Log_path, Master_ASDL, final_dir)
-
-#Check and create directories as needed.
-
-for(i in unique(dirs))
-{
-  if(dir.exists(i) == FALSE)
-  {
-    dir.create(i, recursive = TRUE)
-  }
-}
-
-############################STEP 3 - READ IN THE DIVE LOG AND ASDL PROCESSED DATA #################################
+#===============================================================================
+# STEP 2 - READ IN THE DIVE LOG AND ASDL PROCESSED DATA 
 
 
 #Read all Master Log files.
 
 setwd(Master_ASDL)
 
-#Slant Range Master likely includes a lot of "-9999" to start; the read_csv parser may choke on this unless the column guessing subroutine is overwritten. Explicitly
+#Slant Range Master likely includes a lot of "-9999" to start; the read_csv parser 
+#may choke on this unless the column guessing subroutine is overwritten. Explicitly
 #setting column types is done to address this.
 
 Slant_Range_Master <- read_csv("Tritech_SlantRange_MasterLog.csv", col_types = cols("date_time" = "c", "slant_range_m" = "d"))
@@ -131,8 +126,10 @@ Slant_Range_Master$date_time <- ymd_hms(Slant_Range_Master$date_time)
 MiniZeus_ZFA_Master <- read_csv("MiniZeus_ZFA_MasterLog.csv")
 RBR_Master <- read_csv("RBR_CTD_MasterLog.csv")
 
-#The file "Manual_Beacon_Tracking_MasterLog" is generated by processing script 2b. If the tracking has been good during the survey, there would have been no need to
-#run this script, and therefore this log file would not be present. Check if it is present, and only read it in if it is.
+#The file "Manual_Beacon_Tracking_MasterLog" is generated by processing script 2b.
+#If the tracking has been good during the survey, there would have been no need to
+#run this script, and therefore this log file would not be present. Check if it is 
+#present, and only read it in if it is.
 if(file.exists("Manual_Beacon_Tracking_MasterLog.csv"))
 {
 Manual_Tracking_Master <- read_csv("Manual_Beacon_Tracking_MasterLog.csv") 
@@ -140,17 +137,21 @@ Manual_Tracking_Master <- read_csv("Manual_Beacon_Tracking_MasterLog.csv")
 Hemisphere_Master <- read_csv("Hemisphere_GPS_Heading_MasterLog.csv")
 Ship_Heading_Master <- read_csv("Hemisphere_Heading_MasterLog.csv")
 
-#DVL Master likely includes a lot of "-9999" to start; the read_csv parser may choke on this unless the column guessing parameter is specified manually. Explicitly
+#DVL Master likely includes a lot of "-9999" to start; the read_csv parser may choke 
+#on this unless the column guessing parameter is specified manually. Explicitly
 #setting column types is done to address this.
-DVL_Master <- read_csv("ROWETECH_DVL_MasterLog.csv", col_types = cols("date_time" = "c", "Bottom_X_Velocity_ms" = "d", "Bottom_Y_Velocity_ms" = "d",
+DVL_Master <- read_csv("ROWETECH_DVL_MasterLog.csv", 
+                       col_types = cols("date_time" = "c", "Bottom_X_Velocity_ms" = "d", "Bottom_Y_Velocity_ms" = "d",
                                                                       "Bottom_Z_Velocity_ms" = "d", "Bottom_3D_Velocity_ms" = "d", "Altitude_m" = "d"))
 DVL_Master$date_time <- ymd_hms(DVL_Master$date_time)
 Phantom_Heading_Depth_Master <- read_csv("ROV_Heading_Depth_MasterLog.csv")
 ROV_MiniZeus_IMUS_Master <- read_csv("Zeus_ROV_IMU_MasterLog.csv")
 
 
-#Append a designation column to the Hemisphere GPS data Master, RBR_Master and Manual Tracking Master. Checks to see if 'Manual_Tracking_Master' data frame
-#exists before trying to modify it. If the user has not run the manual tracking processing script (may not have been needed), than this line will not need
+#Append a designation column to the Hemisphere GPS data Master, RBR_Master and 
+#Manual Tracking Master. Checks to see if 'Manual_Tracking_Master' data frame
+#exists before trying to modify it. If the user has not run the manual tracking 
+#processing script (may not have been needed), than this line will not need
 #to be executed.
 
 Hemisphere_Master$ID <- "Ship GPS backup"
@@ -160,7 +161,8 @@ if(exists("Manual_Tracking_Master") == TRUE)
 Manual_Tracking_Master$ID <- "Manual tracking backup"
 }
 
-#Read in each processed transect file as its own data frame. Fill in missing position and depth data if it was missing from a file
+#Read in each processed transect file as its own data frame. Fill in missing 
+#position and depth data if it was missing from a file
 #due to a Hypack crash (or failure to start logging!)
 
 setwd(processed_dir)
@@ -169,7 +171,8 @@ Dives <- list.files(processed_dir)
 for(i in unique(Dives))
 {
   
-#First, check for any periods when Hypack may have crashed. Fill in any such periods with the lat/long and heading data from the Ship_GPS data source
+#First, check for any periods when Hypack may have crashed. Fill in any such 
+  #periods with the lat/long and heading data from the Ship_GPS data source
 #(i.e. the Hemisphere GPS)
   
   name <- i
@@ -183,8 +186,10 @@ for(i in unique(Dives))
   fill$Main_Beacon_Lat[temporary1] <- GPS_to_fill$Lat[index]  #The Lat from the Ship GPS
   fill$Position_Source[temporary1] <- GPS_to_fill$ID[index]
   
-#Next, check and see if better position data can be retrieved from the manual tracking of the main beacon from data output by TrackMan, 
-#fill it in if possible. This code block checks to see if a Manual Tracking Master data frame exists before trying to execute.
+#Next, check and see if better position data can be retrieved from the manual 
+# tracking of the main beacon from data output by TrackMan, fill it in if possible. 
+# This code block checks to see if a Manual Tracking Master data frame exists before 
+# trying to execute.
   
 if(exists("Manual_Tracking_Master") == TRUE)
 {
@@ -198,7 +203,8 @@ if(exists("Manual_Tracking_Master") == TRUE)
   }
 }
   
-#Same process for the Phantom heading, but data could be missing from different index locations. Create new index locator variables, specific to heading parameter
+#Same process for the Phantom heading, but data could be missing from different 
+  # index locations. Create new index locator variables, specific to heading parameter
   
   temporary1 <- which(is.na(fill$Phantom_heading))
   temporary2 <- fill$date_time[temporary1]

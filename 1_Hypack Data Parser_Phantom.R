@@ -58,13 +58,24 @@
 #               allow plotting of certain variables during the descent/ascent 
 #               phase of each dive.
 # Nov 18, 2021: Tested GitHub functionality with RStudio
-# Jan 17, 2022: Started develop branch, JN to review and edit as needed
+# Jan 2022: Started develop branch, made a number of changes:
+#          - raw files read once with readLines then parsed
+#          - uses function for reading raw files (faster than loop)
+#          - processes sensor data prior to expanding to a 1Hz freq dataset
+#          - added feet to meters conversion of secondary depth source
+#          - fills in rov position gaps with ship gps, added source field 
+#          - negative no data values classed as NA instead of -999
+#          - gives option for transect padding, default to 2 min
+#          - removes any time overlap between transects caused by padding
+#          - option to keep all data, incl outside of transect start/stop times
+#          - merges padded start/end times with processed sensor data
+#          - attempted to make code more explicit, removed use of column order
 ################################################################################
 
 
 
 #===============================================================================
-# Set up
+# Packages and session options
 
 # Check for the presence of packages shown below, install if needed
 packages <- c("lubridate", "sp", "readxl", "readr", "purrr",
@@ -81,22 +92,32 @@ lapply(packages, require, character.only = TRUE)
 
 
 #===============================================================================
+# Select options
+
+# Choose the number of minutes for padding start and end transect times
+padtime <- 2
+
+# Should hypack sensor data be clipped to on-transect times only?
+# TRUE for on-transect, FALSE for all data including water column
+onlyTransect <- TRUE
+
+
+#===============================================================================
 # STEP 1 - SET PATHS AND MAKE EXPORT DIRECTORY
 
 # Enter Project folder
-# All files should be found within a 'Data' folder within the project folder
-project_folder <- "Test"
+project_folder <- "Pac2021-054_phantom"
 
-# Assign path to Hypack .RAW files
+# Directory where Hypack .RAW files are stored
 # Path must start from your working directory, check with getwd(), or full paths
-hypack_path <- paste0(project_folder, "/Data/Raw")
+hypack_path <- file.path(project_folder, "Data/Raw")
 
-# Assign path to dive log csv file
+# Directory where dive log csv file is stored
 # Path must start from your working directory, check with getwd(), or full paths
-divelog_path <- paste0(project_folder,"/Data/Dive_Logs/Dive_Log.csv")
+divelog_path <- file.path(project_folder, "Data/Dive_Logs/Dive_Log.csv")
 
 # Create directory for saving both clipped and unclipped .CSV files
-save_dir <- paste0(project_folder, "/Data/Initial_Processed_Data")
+save_dir <- file.path(project_folder, "Data/Initial_Processed_Data")
 dir.create(save_dir, recursive = TRUE) # Will warn if already exists
 
 
@@ -244,13 +265,27 @@ plot(depths$Depth, depths$Depth2)
 abline(a=0, b=1, col="red")
 # Use depth_secondary to fill in gaps in depth_pref where possible
 depths$Depth <- ifelse( is.na(depths$Depth), depths$Depth2, depths$Depth )
+depths <- depths[c("Datetime","Depth")]
 # Summary
 summary(depths)
 
 
-#==================#
-#   ROV Position   #
-#==================#
+#==============#
+#   Position   #
+#==============#
+
+# Ships Position
+# device type == 'POS' device type
+# primary device == GPS_pref
+ship_GPS_data <- dat[dat$Device_type == "POS" & dat$Device == GPS_pref, 
+                     c("X4", "X5", "Datetime", "Zone")]
+names(ship_GPS_data)[1:2] <- c("Ship_Easting","Ship_Northing")
+# Remove duplicated
+ship_gps <- ship_GPS_data[!duplicated(ship_GPS_data$Datetime),]
+# Summary
+summary(ship_gps)
+
+# ROV position
 # device type == 'POS' device type
 # primary device == pos_pref
 # secondary device == pos_secondary
@@ -266,19 +301,32 @@ position_data <- position_data[order(position_data$Datetime),]
 position_data$gaps <- c( difftime(tail(position_data$Datetime, -1), 
                                         head(position_data$Datetime, -1)), 0 )
 
-# Merge primary and secondary depths together using datetime and zone
-positions <- merge(position_data, position_data2, by=c("Datetime","Zone"), all=T)
-# Remove duplicated
+# Merge primary, secondary and ship positions together using datetime and zone
+pos_list <- list(position_data, position_data2, ship_gps)
+positions <- Reduce(function(x, y) merge(x, y, by=c("Datetime","Zone"), all=TRUE), 
+                    pos_list, accumulate=FALSE)
+# Remove duplicated and order
 positions <- positions[!duplicated(positions$Datetime),]
+positions <- positions[order(positions$Datetime),]
 # Plot, look for tight relationship between position sensor data
 # Primary v secondary
 plot(positions$Beacon_Easting, positions$Beacon_Easting2)
 abline(a=0, b=1, col="red")
-plot(positions$Beacon_Northing, positions$Beacon_Northing2)
+# Primary v ship
+plot(positions$Beacon_Easting, positions$Ship_Easting, asp=1)
 abline(a=0, b=1, col="red")
 
-# Replace primary with secondary when primary is NA for more than 60 seconds
+# Check for NA in first Beacon_Easting (signal a gap at the start in the primary)
+# If there is a gap at the start, measure it in minutes
+if( is.na(positions$Beacon_Easting[1]) ){
+  # First Beacon_Easting position
+  f <- min(which(!is.na(positions$Beacon_Easting)))
+  positions$gaps[1] <- difftime(position_data$Datetime[f], 
+                                position_data$Datetime[1])
+}
+# Fill in gap values to non-primary records
 positions$gaps <- na.locf(positions$gaps, fromLast = FALSE)
+# Replace primary with secondary when primary is NA for more than 60 seconds
 positions$Beacon_Northing <-ifelse( positions$gaps > 60 & 
                                       is.na(positions$Beacon_Northing), 
                                      positions$Beacon_Northing2, 
@@ -287,22 +335,27 @@ positions$Beacon_Easting <- ifelse( positions$gaps > 60 &
                                       is.na(positions$Beacon_Easting), 
                                     positions$Beacon_Easting2, 
                                     positions$Beacon_Easting )
+# Then, replace remaining primary gaps over 60 with ship
+positions$Beacon_Northing <-ifelse( positions$gaps > 60 & 
+                                      is.na(positions$Beacon_Northing), 
+                                    positions$Ship_Northing, 
+                                    positions$Beacon_Northing )
+positions$Beacon_Easting <- ifelse( positions$gaps > 60 & 
+                                      is.na(positions$Beacon_Easting), 
+                                    positions$Ship_Easting, 
+                                    positions$Beacon_Easting )
+# Add source field
+positions$PositionSource <- "Primary"
+positions$PositionSource[is.na(positions$Beacon_Easting)] <- ""
+positions$PositionSource[positions$Beacon_Easting == 
+                           positions$Beacon_Easting2] <- "Secondary"
+positions$PositionSource[positions$Beacon_Easting == 
+                           positions$Ship_Easting] <- "Ships"
+# Subset
+pos <- positions[c("Datetime","Zone", "PositionSource",
+                   "Beacon_Easting","Beacon_Northing")]
 # Summary
-summary(positions)
-
-
-#===================#
-#   Ships Position  #
-#===================#
-# device type == 'POS' device type
-# primary device == GPS_pref
-ship_GPS_data <- dat[dat$Device_type == "POS" & dat$Device == GPS_pref, 
-                     c("X4", "X5", "Datetime")]
-names(ship_GPS_data)[1:2] <- c("Ship_Easting","Ship_Northing")
-# Remove duplicated
-ship_gps <- ship_GPS_data[!duplicated(ship_GPS_data$Datetime),]
-# Summary
-summary(ship_gps)
+summary(pos)
 
 
 #=============#
@@ -395,22 +448,13 @@ summary(pitchroll)
 #   Combine   #
 #=============#
 # Merge all together based on datetime
-df_list <- list(positions[c("Datetime","Zone", "Beacon_Easting", "Beacon_Northing")], 
-                ship_gps, depths[c("Datetime","Depth")], headings, altitude, 
-                slant, speed, pitchroll)
-sdat <- Reduce(function(x, y) merge(x, y, by="Datetime", all=TRUE), df_list, 
-               accumulate=FALSE)
+df_list <- list(pos, depths, headings, altitude, slant, speed, pitchroll)
+sdat <- Reduce(function(x, y) merge(x, y, by="Datetime", all=TRUE), 
+               df_list, accumulate=FALSE)
 summary(sdat)
 
 # Sort by Datetime
 sdat <- sdat[order(sdat$Datetime),]
-
-# Check relationship between ship and rov position
-plot(sdat$Beacon_Easting, sdat$Ship_Easting, asp=1)
-abline(a=0, b=1, col="red")
-plot(sdat$Beacon_Northing, sdat$Ship_Northing, asp=1)
-abline(a=0, b=1, col="red")
-
 
 
 
@@ -434,10 +478,10 @@ if( any(!dnames %in% names(dlog)) ) {
 dlog$Start_UTC <- mdy_hm(dlog$Start_UTC)
 dlog$End_UTC <- mdy_hm(dlog$End_UTC)
 
-# Pad out the transect start/end times by 2 minutes each to ensure overlap with 
+# Pad out the transect start/end times by 'padtime' minutes each to ensure overlap with 
 # transect annotations
-dlog$Start_UTC_pad <- dlog$Start_UTC - minutes(2)
-dlog$End_UTC_pad <- dlog$End_UTC + minutes(2)
+dlog$Start_UTC_pad <- dlog$Start_UTC - minutes(padtime)
+dlog$End_UTC_pad <- dlog$End_UTC + minutes(padtime)
 
 # Crop padded times so there is no overlap between transects
 for (i in 2:nrow(dlog)){
@@ -462,172 +506,156 @@ for(i in 1:nrow(dlog)){
   slog <- rbind(slog, tmp)
 }
 # Save for use in later processing scripts
-save(slog, file=file.path(project_folder, "Data", "Dive_Times_1Hz.RData"))
+save(slog, file=file.path(save_dir, "Dive_Times_1Hz.RData"))
 
 
 # Merge the hypack processed data with the 1 Hz  dive log sequence
-# Removes senor data that is not on-transect
-alldat <- merge(slog, sdat, by = "Datetime", all.x=T)
+# Removes senor data that is not on-transect if onlyTransect == TRUE
+if( onlyTransect ){
+  alldat <- merge(slog, sdat, by = "Datetime", all.x=T)
+} else {
+  alldat <- merge(slog, sdat, by = "Datetime", all=T)
+}
 
 # Save for use in later processing scripts
-save(alldat, file=file.path(project_folder, "Data", "SensorData_onTransects.RData"))
+save(alldat, file=file.path(save_dir, "SensorData_onTransects.RData"))
+
+
+#===============================================================================
+# STEP 6 - WRITE CLIPPED .CSV FILES FOR EACH DIVE
+
+# Loop through the Dive Names in the all_data frames, write one .CSV 
+# for the clipped (on transect data) for each dive.
+for(j in unique(alldat$Transect_Name)){
+  to_write <- filter(alldat, Transect_Name == j)
+  write.csv(to_write, file = file.path(save_dir, paste0(j,".csv")), 
+            quote = F, row.names = F)
+}
+
+# If onlyTransect is FALSE, then export all data as one additional CSV
+if ( !onlyTransect ){
+  write.csv(alldat, file = file.path(save_dir,"Alldata_OnOffTransects.csv"), 
+            quote = F, row.names = F)
+}
+
 
 
 # To do
+# - Only export a single csv for on-transect
 # - Makes sense to do the interpolation to fill in gaps at this point before 
-#   converting to lat and long with NA values
-# - All meter values within a transect should be in the same UTM zone, so there
-#   will be no issue with different crs
-# - Check other scripts first - script 2 gets other data that is used in the 
-#   interpolation in script 3
+#   converting to lat and long with NA values (not sure why step 13 is necessary now)
 
 
 
 
-######################STEP 13 - CONVERT THE POSITION DATA TO DECIMAL DEGREES####################################
 
-#In order to convert the data that is recorded by Hypack as UTM values, the position_all data frame needs to be converted to
-#a SpatialPointsDataFrame, which is class in the package(sp), loaded by package(rgdal) at the start of this script. 
-#SpatialPointsDataFrames cannot contain NA values, so these value must first be selected for and set aside, since some of these rows with NA
-#values are still of interest, they are re-inserted into the data when the SpatialPointsDataFrame object is converted back to a regular data.frame
-#SpatialPointsDataFrames also are restricted to a single coordinate reference system (CRS). Since different dives could conceivably by from different
-#UTM zones (i.e. different CRS), the loop below splits the position data into seperate transects and load the appropriate CRS that corresponds to the UTM
-#Zone that was set in Hypack for each particular dive.
-
-#Empty data frames to fill with the ship and beacon values converted into decimal degree values for latitude and longitude.
-ship_geographic <- data.frame()
-main_beacon_geographic <- data.frame()
-secondary_beacon_geographic <- data.frame()
-
-#Strip NA values, generate spatial points DFs for each transect, transform to Lat/Longs, then save as a dataframe again.
-for(i in unique(position_all$Transect_Name))
-{
-  main_beacon_no_NA <- filter(position_all, !is.na(Main_Beacon_Easting) & position_all$Transect_Name == i)
-  ship_no_NA <- filter(position_all, !is.na(Ship_Easting) & position_all$Transect_Name == i)
-  
-  main_beacon_coordinates <- main_beacon_no_NA[, c("Main_Beacon_Easting","Main_Beacon_Northing")] # UTM coordinates for the AAE wide transponder
-  ship_coordinates <- ship_no_NA[, c("Ship_Easting","Ship_Northing")] # UTM coordinates for the Ship GPS
-  
-  main_beacon_data <- main_beacon_no_NA[, c("date_time","Transect_Name","device","Gaps")] # data to keep
-  ship_data <- as.data.frame(ship_no_NA[, c("date_time")]) # data to keep
-  
-  zone_num <- unique(position_all$zone[position_all$Transect_Name == i]) #Find the unique zone number value associate with each dive number, this might include an NA value.
-  zone_num <- zone_num[!is.na(zone_num)] #Control for NA values; drop index values that may be NA, keeping only integer zone number values (8,9 or 10).
-  crs <- CRS(paste0("+proj=utm +zone=", zone_num ," +datum=WGS84")) #proj4string of coordinates.
-  
-  #Assemble the spatial data points DF.
-  
-  main_beacon_spatial <- SpatialPointsDataFrame(coords = main_beacon_coordinates, data = main_beacon_data, proj4string = crs)
-  ship_spatial <- SpatialPointsDataFrame(coords = ship_coordinates, data = ship_data, proj4string = crs)
-  
-  #Transform the UTMs coordinates into lat/longs, formatted as decimal degrees. Then turn it back into a regular DF.
-  
-  main_beacon_spatial <- spTransform(main_beacon_spatial, CRS("+proj=longlat +datum=WGS84"))
-  ship_spatial <- spTransform(ship_spatial, CRS("+proj=longlat +datum=WGS84"))
-  main_beacon_spatial <- as.data.frame(main_beacon_spatial)
-  main_beacon_spatial <- main_beacon_spatial[,c(1:3,5:6)]
-  ship_spatial <- as.data.frame(ship_spatial)
- 
-  
-  #Add rows to empty data frames initialzed before this loop.
-  main_beacon_geographic <- bind_rows(main_beacon_geographic, main_beacon_spatial)
-  ship_geographic <- bind_rows(ship_geographic, ship_spatial)
-  
-  #Check to see if a secondary beacon was used during the transect before trying to generate the SP Data Frame object, if not (length = 0), skip trying
-  #to process data from the secondary beacon. 
-  current_transect <- filter(position_all, Transect_Name == i)
-  if(length(which(!is.na(current_transect$Secondary_Beacon_Easting))) != 0)
-  {
-    secondary_beacon_no_NA <- filter(position_all, !is.na(Secondary_Beacon_Easting) & position_all$Transect_Name == i)
-    secondary_beacon_coordinates <- secondary_beacon_no_NA[, c("Secondary_Beacon_Easting","Secondary_Beacon_Northing")] # UTM coordinates for the AAE wide transponder
-    secondary_beacon_data <- secondary_beacon_no_NA[, c("date_time")] # data to keep
-    secondary_beacon_spatial <- SpatialPointsDataFrame(coords = secondary_beacon_coordinates, data = secondary_beacon_data, proj4string = crs)
-    secondary_beacon_spatial <- spTransform(secondary_beacon_spatial, CRS("+proj=longlat +datum=WGS84"))
-    secondary_beacon_spatial <- as.data.frame(secondary_beacon_spatial)
-    secondary_beacon_geographic <- bind_rows(secondary_beacon_geographic, secondary_beacon_spatial)
-  }
-  
-}
-
-#Rename the columns.
-
-names(main_beacon_geographic) <- c("date_time","Transect_Name","device","Beacon_Long","Beacon_Lat")
-names(ship_geographic) <- c("date_time","Ship_Long","Ship_Lat")
-
-
-#Check to see if secondary beacon has any data; secondary beacon may not have been used. 
-#If that is the case, fill the entries in the beacon dataframe containing Lat/Long values with 'NULL' entries.
-if(exists("secondary_beacon_spatial")) 
-{
-  names(secondary_beacon_geographic) <- c("date_time","Transect_Name","device","Beacon_Long","Beacon_Lat")
-} else {
-  secondary_beacon_geographic <- full_seq
-  secondary_beacon_geographic$Secondary_Beacon_Long <- rep("NULL",length(full_seq$date_time))
-  secondary_beacon_geographic$Secondary_Beacon_Lat <- rep("NULL", length(full_seq$date_time))
-  secondary_beacon_geographic <- secondary_beacon_geographic[, c(2:4)]
-}  
-
-#Slot the Long/Lat positions back in the position_all DF, and remove the northing and eastings
-
-position_all <- left_join(position_all, main_beacon_geographic, by = "date_time")
-position_all$Main_Beacon_Easting <- position_all$Main_Beacon_Long
-position_all$Main_Beacon_Northing <- position_all$Main_Beacon_Lat
-position_all <- left_join(position_all, secondary_beacon_geographic, by = "date_time")
-position_all <- left_join(position_all, ship_geographic, by = "date_time")
-
-
-position_all <- position_all[,c(1:3,12:17,8)]
-names(position_all) <- c("date_time","Transect_Name","device","Main_Beacon_Long","Main_Beacon_Lat",
-                         "Secondary_Beacon_Long","Secondary_Beacon_Lat","Ship_Long","Ship_Lat","Gaps")
-
-#Round all Lat/Long values to the 5th decimal, equivalent to ~ 1m precision.
-
-position_all$Main_Beacon_Lat <- round(position_all$Main_Beacon_Lat, digits = 5)
-position_all$Main_Beacon_Long <- round(position_all$Main_Beacon_Long, digits = 5)
-if(exists("secondary_beacon_spatial")) #As above, secondary beacon may not have been used. Skip next step if so.
-  {
-  position_all$Secondary_Beacon_Lat <- round(position_all$Secondary_Beacon_Lat, digits = 5)
-  position_all$Secondary_Beacon_Long <- round(position_all$Secondary_Beacon_Long, digits = 5)
-  }
-position_all$Ship_Long <- round(position_all$Ship_Long, digits = 5)
-position_all$Ship_Lat <- round(position_all$Ship_Lat, digits = 5)
-
-
-
-#####################################STEP 14 - ASSEMBLE ALL DATA TO A SINGLE DATA FRAME###########################
-
-#Join position data with depth, heading, altitude, slant range and RogueCam pitch and roll data records for the full period of record (descent, on transect, ascent)
-
-all_data <- position_all
-all_data$Depth_m <- depth_all$Depth_m
-all_data$Phantom_heading <- phantom_heading_data$Phantom_heading
-all_data$Ship_heading <- ship_heading_data$Ship_heading
-all_data$Speed_kts <- speed_data$speed_kts
-all_data$Altitude_m <- altitude_data$altitude_m
-all_data$Slant_Range_m <- slant_data$slant_range_m
-all_data$Rogue_pitch <- rogue_data$pitch
-all_data$Rogue_roll <- rogue_data$roll
-
-#Add the data source for each depth records, and the column listing gaps in position
-
-all_data$Depth_Source <- depth_all$device
-all_data$Position_Source <- position_all$device
-
-#Re-order columns to the following order: date_time, Transect_Name, Main Beacon Long/Lat, Secondary Beacon Long/Lat, Ship Lat/Long,
-#Depth_m, Phantom Heading, Ship Heading, Phantom Speed, Phantom Altitude, MiniZeus Slant Range, Rogue Pitch, Rogue Roll, Depth Data Source
-#Position Source, Gaps. Device column is dropped.
-
-all_data <- all_data[,c(1:2,4:9,11:20,10)]
-
-
-#######################################STEP 15 - WRITE CLIPPED .CSV FILES FOR EACH DIVE##################################
-
-
-#Loop through the Dive Names in the all_data frames, write one .CSV for the clipped (on transect data) for each dive.
-
-for(j in unique(all_data$Transect_Name))
-{
-  to_write <- filter(all_data, Transect_Name == j)
-  write.csv(to_write, file = paste0(save_dir,"/",j,".csv"), quote = F, row.names = F)
-}
-
+# 
+# ######################STEP 13 - CONVERT THE POSITION DATA TO DECIMAL DEGREES####################################
+# 
+# #In order to convert the data that is recorded by Hypack as UTM values, the position_all data frame needs to be converted to
+# #a SpatialPointsDataFrame, which is class in the package(sp), loaded by package(rgdal) at the start of this script. 
+# #SpatialPointsDataFrames cannot contain NA values, so these value must first be selected for and set aside, since some of these rows with NA
+# #values are still of interest, they are re-inserted into the data when the SpatialPointsDataFrame object is converted back to a regular data.frame
+# #SpatialPointsDataFrames also are restricted to a single coordinate reference system (CRS). Since different dives could conceivably by from different
+# #UTM zones (i.e. different CRS), the loop below splits the position data into seperate transects and load the appropriate CRS that corresponds to the UTM
+# #Zone that was set in Hypack for each particular dive.
+# 
+# #Empty data frames to fill with the ship and beacon values converted into decimal degree values for latitude and longitude.
+# ship_geographic <- data.frame()
+# main_beacon_geographic <- data.frame()
+# secondary_beacon_geographic <- data.frame()
+# 
+# #Strip NA values, generate spatial points DFs for each transect, transform to Lat/Longs, then save as a dataframe again.
+# for(i in unique(position_all$Transect_Name))
+# {
+#   main_beacon_no_NA <- filter(position_all, !is.na(Main_Beacon_Easting) & position_all$Transect_Name == i)
+#   ship_no_NA <- filter(position_all, !is.na(Ship_Easting) & position_all$Transect_Name == i)
+#   
+#   main_beacon_coordinates <- main_beacon_no_NA[, c("Main_Beacon_Easting","Main_Beacon_Northing")] # UTM coordinates for the AAE wide transponder
+#   ship_coordinates <- ship_no_NA[, c("Ship_Easting","Ship_Northing")] # UTM coordinates for the Ship GPS
+#   
+#   main_beacon_data <- main_beacon_no_NA[, c("date_time","Transect_Name","device","Gaps")] # data to keep
+#   ship_data <- as.data.frame(ship_no_NA[, c("date_time")]) # data to keep
+#   
+#   zone_num <- unique(position_all$zone[position_all$Transect_Name == i]) #Find the unique zone number value associate with each dive number, this might include an NA value.
+#   zone_num <- zone_num[!is.na(zone_num)] #Control for NA values; drop index values that may be NA, keeping only integer zone number values (8,9 or 10).
+#   crs <- CRS(paste0("+proj=utm +zone=", zone_num ," +datum=WGS84")) #proj4string of coordinates.
+#   
+#   #Assemble the spatial data points DF.
+#   
+#   main_beacon_spatial <- SpatialPointsDataFrame(coords = main_beacon_coordinates, data = main_beacon_data, proj4string = crs)
+#   ship_spatial <- SpatialPointsDataFrame(coords = ship_coordinates, data = ship_data, proj4string = crs)
+#   
+#   #Transform the UTMs coordinates into lat/longs, formatted as decimal degrees. Then turn it back into a regular DF.
+#   
+#   main_beacon_spatial <- spTransform(main_beacon_spatial, CRS("+proj=longlat +datum=WGS84"))
+#   ship_spatial <- spTransform(ship_spatial, CRS("+proj=longlat +datum=WGS84"))
+#   main_beacon_spatial <- as.data.frame(main_beacon_spatial)
+#   main_beacon_spatial <- main_beacon_spatial[,c(1:3,5:6)]
+#   ship_spatial <- as.data.frame(ship_spatial)
+#  
+#   
+#   #Add rows to empty data frames initialzed before this loop.
+#   main_beacon_geographic <- bind_rows(main_beacon_geographic, main_beacon_spatial)
+#   ship_geographic <- bind_rows(ship_geographic, ship_spatial)
+#   
+#   #Check to see if a secondary beacon was used during the transect before trying to generate the SP Data Frame object, if not (length = 0), skip trying
+#   #to process data from the secondary beacon. 
+#   current_transect <- filter(position_all, Transect_Name == i)
+#   if(length(which(!is.na(current_transect$Secondary_Beacon_Easting))) != 0)
+#   {
+#     secondary_beacon_no_NA <- filter(position_all, !is.na(Secondary_Beacon_Easting) & position_all$Transect_Name == i)
+#     secondary_beacon_coordinates <- secondary_beacon_no_NA[, c("Secondary_Beacon_Easting","Secondary_Beacon_Northing")] # UTM coordinates for the AAE wide transponder
+#     secondary_beacon_data <- secondary_beacon_no_NA[, c("date_time")] # data to keep
+#     secondary_beacon_spatial <- SpatialPointsDataFrame(coords = secondary_beacon_coordinates, data = secondary_beacon_data, proj4string = crs)
+#     secondary_beacon_spatial <- spTransform(secondary_beacon_spatial, CRS("+proj=longlat +datum=WGS84"))
+#     secondary_beacon_spatial <- as.data.frame(secondary_beacon_spatial)
+#     secondary_beacon_geographic <- bind_rows(secondary_beacon_geographic, secondary_beacon_spatial)
+#   }
+#   
+# }
+# 
+# #Rename the columns.
+# 
+# names(main_beacon_geographic) <- c("date_time","Transect_Name","device","Beacon_Long","Beacon_Lat")
+# names(ship_geographic) <- c("date_time","Ship_Long","Ship_Lat")
+# 
+# 
+# #Check to see if secondary beacon has any data; secondary beacon may not have been used. 
+# #If that is the case, fill the entries in the beacon dataframe containing Lat/Long values with 'NULL' entries.
+# if(exists("secondary_beacon_spatial")) 
+# {
+#   names(secondary_beacon_geographic) <- c("date_time","Transect_Name","device","Beacon_Long","Beacon_Lat")
+# } else {
+#   secondary_beacon_geographic <- full_seq
+#   secondary_beacon_geographic$Secondary_Beacon_Long <- rep("NULL",length(full_seq$date_time))
+#   secondary_beacon_geographic$Secondary_Beacon_Lat <- rep("NULL", length(full_seq$date_time))
+#   secondary_beacon_geographic <- secondary_beacon_geographic[, c(2:4)]
+# }  
+# 
+# #Slot the Long/Lat positions back in the position_all DF, and remove the northing and eastings
+# 
+# position_all <- left_join(position_all, main_beacon_geographic, by = "date_time")
+# position_all$Main_Beacon_Easting <- position_all$Main_Beacon_Long
+# position_all$Main_Beacon_Northing <- position_all$Main_Beacon_Lat
+# position_all <- left_join(position_all, secondary_beacon_geographic, by = "date_time")
+# position_all <- left_join(position_all, ship_geographic, by = "date_time")
+# 
+# 
+# position_all <- position_all[,c(1:3,12:17,8)]
+# names(position_all) <- c("date_time","Transect_Name","device","Main_Beacon_Long","Main_Beacon_Lat",
+#                          "Secondary_Beacon_Long","Secondary_Beacon_Lat","Ship_Long","Ship_Lat","Gaps")
+# 
+# #Round all Lat/Long values to the 5th decimal, equivalent to ~ 1m precision.
+# 
+# position_all$Main_Beacon_Lat <- round(position_all$Main_Beacon_Lat, digits = 5)
+# position_all$Main_Beacon_Long <- round(position_all$Main_Beacon_Long, digits = 5)
+# if(exists("secondary_beacon_spatial")) #As above, secondary beacon may not have been used. Skip next step if so.
+#   {
+#   position_all$Secondary_Beacon_Lat <- round(position_all$Secondary_Beacon_Lat, digits = 5)
+#   position_all$Secondary_Beacon_Long <- round(position_all$Secondary_Beacon_Long, digits = 5)
+#   }
+# position_all$Ship_Long <- round(position_all$Ship_Long, digits = 5)
+# position_all$Ship_Lat <- round(position_all$Ship_Lat, digits = 5)
+# 
+#
