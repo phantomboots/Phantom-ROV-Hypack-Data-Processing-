@@ -52,7 +52,8 @@
 # Packages and session options
 
 # Check for the presence of packages shown below, install missing
-packages <- c("lubridate","readr","dplyr","stringr","imputeTS","measurements")
+packages <- c("lubridate","readr","dplyr","stringr","imputeTS","measurements",
+              "purrr")
 new_packages <- packages[!(packages %in% installed.packages()[,"Package"])]
 if(length(new_packages)) install.packages(new_packages)
 
@@ -93,48 +94,58 @@ rov_roll_offset <- -1
 
 
 #===============================================================================
-# STEP 2 - READ IN THE ROV HEADING, DEPTH AND UTURNS FROM ASDL
+# STEP 1 - FUNCTION TO READ AND PROCESS ASDL DATA
 
-# List files and read into one larger file. This is a comma separated record, but 
-# some files have more columns than others, so need to read in files without 
-# comma delimiters to start. Use the semi-colon as a bogus delimiter.
+
+# Function to read in and process asdl
+readADSL <- function( afile, type ){
+  # Read in lines from hypack files
+  alines <- readLines(afile, skipNul=FALSE)
+  # Count the number of columns (commas) in each row
+  colcount <- str_count(alines,",")
+  # Remove lines without the correct number of columns
+  # Filters out rows with nulls or errors
+  alines <- alines[colcount == median(colcount)]
+  # Bind lines together in dataframe, fills in blanks with NA
+  ds_list <-  alines %>% strsplit(., ",") 
+  ds <- map(ds_list, ~ c(X=.)) %>% bind_rows(.) %>% as.data.frame()
+  # Keep only relevant columns based on type
+  # ROV
+  if( type == "ROV") ds <- ds[,c("X1","X2","X3")]
+  # Extract datetime
+  date_str <- str_extract(ds$X1, "\\d{8}")
+  time_str <- str_extract(ds$X1, "\\d{2}\\:\\d{2}\\.\\d{2}")
+  time_str <- gsub("\\.",":",time_str)
+  ds$X1 <- ymd_hms(paste(date_str, time_str, sep = " "))
+  # Interpolate the datetime series to fill gaps
+  ds$X1 <- floor_date(as_datetime(na_interpolation(
+    as.numeric(ds$X1))), "second")
+  # Remove duplicate time stamps
+  ds <- ds[!duplicated(ds$X1),]
+  # Return
+  return(ds)
+}
+
+
+#======================#
+#    Depth & Heading   #
+#======================#
 
 # List files
 ROV_files <- list.files(pattern = "^ROV", path = ASDL_dir, full.names = T)
-
 # Run if ROV_files exist
-if(length(ROV_files != 0)){
-  ROV_all <- NULL
-  # Loop
-  for(i in 1:length(ROV_files)){
-    tmp <- read.csv(ROV_files[i], header=F, 
-                    colClasses = c(rep("character",3), "integer"))
-    ROV_all <- bind_rows(ROV_all, tmp)
-  }
-
-  # Locate date stamp values and time stamp values. Replace period in timestamp 
-  # value with a colon. Parse date_time.
-  ROV_all$date <- str_extract(ROV_all$V1, "\\d{8}")
-  ROV_all$time <- str_extract(ROV_all$V1, "\\d{2}\\:\\d{2}\\.\\d{2}")
-  ROV_all$time <- gsub("\\.",":",ROV_all$time)
-  ROV_all$date_time <- ymd_hms(paste(ROV_all$date, ROV_all$time, sep = " "))
-  
-  # Impute the time series, before filtering out any values
-  full <- na_interpolation(as.numeric(ROV_all$date_time))
-  full <- as.integer(full)
-  ROV_all$date_time <- full #Put it back into the data frame.
-  
-  # Remove duplicate time stamps row. Convert back to a POSIXct object.
-  ROV_all <- ROV_all[!duplicated(ROV_all$date_time),]
-  ROV_all$date_time <- as.POSIXct(ROV_all$date_time, 
-                                  origin = "1970-01-01", tz = "UTC") #Standard R origin value
-  
-  # Keep only the relevant columns, and write to a .CSV file.
-  ROV_all <- ROV_all[,c("date_time","V2","V3")]
-  names(ROV_all) <- c("date_time","Depth_m","Phantom_heading")
-  write.csv(ROV_all, paste(save_dir,"ROV_Heading_Depth_MasterLog.csv", sep ="/"), 
-            quote = F, row.names = F)
+if( length(ROV_files) > 0 ){
+  # Apply function to ROV files
+  rovlist <- lapply(ROV_files, FUN=readADSL, type="ROV")
+  # Bind into dataframe
+  ROV_all <- do.call("rbind", rovlist)
+  # Rename
+  names(ROV_all) <- c("Datetime","Depth_m","Phantom_heading")
+  #   write.csv(ROV_all, paste(save_dir,"ROV_Heading_Depth_MasterLog.csv", sep ="/"), 
+  #             quote = F, row.names = F)
 }
+
+
 
 
 ########################STEP 4 - READ IN THE TRITECH ALTIMETER SLANT RANGE FROM ASDL########################################
