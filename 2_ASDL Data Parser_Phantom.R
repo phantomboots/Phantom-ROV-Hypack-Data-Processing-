@@ -38,11 +38,12 @@
 #               delimited format. Setting number of columns explicitly via 
 #               col_names = paste0("X", seq_len(...)), where ... is the 
 #               explicitly stated number of columns, will control for this.
+# Jan 2021: - Created a function to load and process the datetime
+#           - Applies that function to each file type
+#           - Use NA as nodata instead of -999
 ################################################################################
 
 # Notes - 
-# - read_csv seems to do a better job at reading in the log files than read.csv
-# - create function to load, process and write all log type data, then apply
 # - maybe combine all the data into one dataframe with columns as data types
 # - then #3 uses this data to fill in hypack data, maybe do that here? and save
 #   3 just for interpolation
@@ -52,8 +53,7 @@
 # Packages and session options
 
 # Check for the presence of packages shown below, install missing
-packages <- c("lubridate","readr","dplyr","stringr","imputeTS","measurements",
-              "purrr")
+packages <- c("lubridate","dplyr","stringr","imputeTS","purrr", "future.apply")
 new_packages <- packages[!(packages %in% installed.packages()[,"Package"])]
 if(length(new_packages)) install.packages(new_packages)
 
@@ -63,8 +63,11 @@ options(digits = 12)
 # Load required packages
 lapply(packages, require, character.only = TRUE)
 
-# imputeTS - Intepolation of missing time series values, where required 
-#            (replaces 'NA' values)
+# Set multisession so future_lapply runs in parallel
+plan(multisession)
+
+
+
 # measurements - Facilitates converting data from the Hemisphere GPS from 
 #                Deg/Decimal mins to Decimal degrees.
 
@@ -84,7 +87,7 @@ ASDL_dir <- file.path(project_folder, "Data/Advanced_Serial_Data_Logger")
 save_dir <- file.path(project_folder, "Data/Advanced_Serial_Data_Logger/Full_Cruise")
 dir.create(save_dir, recursive = TRUE) # Will warn if already exists
 
-# Offset values for IMUs located in the Phantom's subsea cam and on the MiniZeus
+# Offset values for IMUs located in the Phantom's subsea can and on the MiniZeus
 # An offset of zero means is measure the expect 90 degrees when perpendicular 
 # to the seafloor.
 zeus_pitch_offset <- 0 
@@ -94,37 +97,86 @@ rov_roll_offset <- -1
 
 
 #===============================================================================
-# STEP 1 - FUNCTION TO READ AND PROCESS ASDL DATA
+# STEP 2 - READ AND PROCESS ASDL DATA BY TYPE
 
-
-# Function to read in and process asdl
-readADSL <- function( afile, type ){
-  # Read in lines from hypack files
-  alines <- readLines(afile, skipNul=FALSE)
-  # Count the number of columns (commas) in each row
-  colcount <- str_count(alines,",")
-  # Remove lines without the correct number of columns
-  # Filters out rows with nulls or errors
-  alines <- alines[colcount == median(colcount)]
-  # Bind lines together in dataframe, fills in blanks with NA
-  ds_list <-  alines %>% strsplit(., ",") 
-  ds <- map(ds_list, ~ c(X=.)) %>% bind_rows(.) %>% as.data.frame()
-  # Keep only relevant columns based on type
-  # ROV
-  if( type == "ROV") ds <- ds[,c("X1","X2","X3")]
-  # Extract datetime
-  date_str <- str_extract(ds$X1, "\\d{8}")
-  time_str <- str_extract(ds$X1, "\\d{2}\\:\\d{2}\\.\\d{2}")
-  time_str <- gsub("\\.",":",time_str)
-  ds$X1 <- ymd_hms(paste(date_str, time_str, sep = " "))
-  # Interpolate the datetime series to fill gaps
-  ds$X1 <- floor_date(as_datetime(na_interpolation(
-    as.numeric(ds$X1))), "second")
-  # Remove duplicate time stamps
-  ds <- ds[!duplicated(ds$X1),]
-  # Return
-  return(ds)
+# Function to read in and process ASDL
+# If a file fails to be read or processed, continue to next file
+# Return error messages
+readASDL <- function( afile, type ){
+  tryCatch({
+    # Packages
+    packages <- c("lubridate","dplyr","stringr","imputeTS","purrr")
+    lapply(packages, require, character.only = TRUE)
+    # Read in lines from ASDL files
+    alines <- readLines(afile, skipNul=FALSE)
+    if ( type == "pos" ){
+      # Crop to first GPZDA row, first row with datetime and 
+      # subset GPZDA and GPGGA rows only
+      alines <- alines[min(grep("GPZDA",alines)):length(alines)]
+      alines <- alines[grep("GPZDA|GPGGA",alines)]
+    } else {
+      # Count the number of columns (commas) in each row
+      colcount <- str_count(alines,",")
+      # Remove lines without the correct number of columns
+      # Filters out rows with nulls or errors
+      alines <- alines[colcount == median(colcount)]
+    }
+    # Bind lines together in dataframe, fills in blanks with NA
+    ds_list <-  alines %>% strsplit(., ",") 
+    ds <- map(ds_list, ~ c(X=.)) %>% bind_rows(.) %>% as.data.frame()
+    # Keep only relevant columns based on type
+    if( type == "rov" ) ds <- ds[,c("X1","X2","X3")]
+    if( type == "tritech" ) ds <- ds[,c("X1","X4")]
+    if( type == "minizeus" ) ds <- ds[,c("X1","X3","X5","X7")]
+    if( type == "rbr" ) ds <- ds[,paste0("X", 1:10)]
+    if( type == "pos" ) ds <- ds[,c("X1","X2","X3","X4","X5")]
+    # Extract datetime in X1
+    if( type == "rbr" ){
+      ds$X1 <- sub(".*[>]","", ds$X1)
+      ds$X1 <- sub("[.].*","", ds$X1)
+      ds$X1 <- ymd_hms(ds$X1)
+    } else if( type == "pos" ){
+      dtype <- ds$X1 # Copy first column
+      date_str <- paste0(ds$X5, ds$X4, ds$X3)
+      date_str[dtype == "$GPGGA"] <- "19990909" # place holder to be removed
+      time_str <- sub("[.].*","",ds$X2)
+      ds$X1 <- suppressWarnings(ymd_hms(paste(date_str, time_str, sep = " ")))
+      ds$X1[dtype == "$GPGGA"] <- NA # remove place holder datetimes
+    } else {
+      date_str <- str_extract(ds$X1, "\\d{8}")
+      time_str <- str_extract(ds$X1, "\\d{2}\\:\\d{2}\\.\\d{2}")
+      time_str <- gsub("\\.",":",time_str)
+      ds$X1 <- suppressWarnings(ymd_hms(paste(date_str, time_str, sep = " ")))
+    }
+    # Interpolate the datetime series to fill gaps
+    ds$X1 <- floor_date(as_datetime(na_interpolation(
+      as.numeric(ds$X1))), "second")
+    # For "pos" reformat lat/lon
+    if( type == "pos" ){
+      # Subset rows and columns GPS position
+      ds <- ds[dtype == "$GPGGA", c("X1","X3","X5")]
+      # Reformat to decimal degrees with 7 decimal points
+      ds$X3 <- round(as.numeric(substring(ds$X3, 1, 2)) + 
+                       (as.numeric(substring(ds$X3, 3, nchar(ds$X3)))/60), 7)
+      ds$X5 <- -1 * round(as.numeric(substring(ds$X5, 1, 3)) + 
+                            (as.numeric(substring(ds$X5, 4, nchar(ds$X5)))/60), 7)
+    }
+    # Remove duplicate time stamps
+    ds <- ds[!duplicated(ds$X1),]
+    # Set all columns except X1 as numeric
+    ds[,-1] <- apply(ds[,-1], 2, as.numeric)
+    # Remove NA values by checking second row
+    ds <- ds[!is.na(ds[,2]),]
+    # Return
+    return(ds)
+  },
+  error=function(cond) {
+    message(paste("File caused an error:", sub(".*[/]","",afile)))
+    message(conditionMessage(cond))
+    return(NULL)
+  })    
 }
+
 
 
 #======================#
@@ -135,316 +187,115 @@ readADSL <- function( afile, type ){
 ROV_files <- list.files(pattern = "^ROV", path = ASDL_dir, full.names = T)
 # Run if ROV_files exist
 if( length(ROV_files) > 0 ){
-  # Apply function to ROV files
-  rovlist <- lapply(ROV_files, FUN=readADSL, type="ROV")
+  # Apply function in parallel
+  zfalist <- future_lapply(ROV_files, FUN=readASDL, type="rov")
   # Bind into dataframe
   ROV_all <- do.call("rbind", rovlist)
   # Rename
   names(ROV_all) <- c("Datetime","Depth_m","Phantom_heading")
+  # Summary
+  summary(ROV_all)
   #   write.csv(ROV_all, paste(save_dir,"ROV_Heading_Depth_MasterLog.csv", sep ="/"), 
   #             quote = F, row.names = F)
 }
 
-
-
-
-########################STEP 4 - READ IN THE TRITECH ALTIMETER SLANT RANGE FROM ASDL########################################
-
-#List files and read into one larger file. This is a comma seperate record, but 
-# some files have more columns than others, so need to
-#read in files without comma delimeters to start. Use the semi-colon as a bogus delimeter.
+#======================#
+#      Slant range     #
+#======================#
 
 # List files
-Tritech_files <- list.files(ASDL_dir, pattern = "^Tritech", full.names = T)
-
-# Run if Tritech_files exist
-if(length(Tritech_files != 0)){
-  Tritech_all <- NULL
-  # Loop
-  for(f in Tritech_files){
-    tmp <- read.csv(f, header=F, colClasses = "character")
-    Tritech_all <- bind_rows(Tritech_all, tmp)
-  }
-  
-  #Located date stamp values and time stamp values. Replace period in timestamp value with a colon. Parse date_time.
-  Tritech_all$date <- str_extract(Tritech_all$V1, "\\d{8}")
-  Tritech_all$time <- str_extract(Tritech_all$V1, "\\d{2}\\:\\d{2}\\.\\d{2}")
-  Tritech_all$time <- gsub("\\.",":",Tritech_all$time)
-  Tritech_all$date_time <- ymd_hms(paste(Tritech_all$date, Tritech_all$time, sep = " "))
-  
-  #Extract altimeter slant range.
-  Tritech_all$slant_range_m <- as.numeric(Tritech_all$V4)
-  
-  #Impute the time series, before filtering out any values
-  full <- na_interpolation(as.numeric(Tritech_all$date_time))
-  Tritech_all$date_time <- as.integer(full) #Put it back into the data frame as an integer, for filtering purposes.
-  
-  #Remove duplicate values, convert the date_time back to a POSIXct object.
-  Tritech_all <- Tritech_all[!duplicated(Tritech_all$date_time),]
-  Tritech_all$date_time <- as.POSIXct(Tritech_all$date_time, 
-                                      origin = "1970-01-01", tz = "UTC") #Standard R origin value
-  
-  #Remove NA values.
-  Tritech_all <- filter(Tritech_all, !is.na(slant_range_m))
-  
-  #Set values of 9.99 and 0 (out of range values) to -9999
-  Tritech_all$slant_range_m[Tritech_all$slant_range_m == 0] <- NA
+Tritech_files <- list.files(pattern = "^Tritech", path = ASDL_dir, full.names = T)
+# Run if slant_files exist
+if( length(Tritech_files) > 0 ){
+  # Apply function in parallel
+  zfalist <- future_lapply(Tritech_files, FUN=readASDL, type="tritech")
+  # Bind into dataframe
+  Tritech_all <- do.call("rbind", trilist)
+  # Rename
+  names(Tritech_all) <- c("Datetime","slant_range_m")
+  # Set values of 9.99 or 0 or less (out of range values) to NA
+  # Question: Can slant range be less than zero?
+  Tritech_all$slant_range_m[Tritech_all$slant_range_m <= 0] <- NA
   Tritech_all$slant_range_m[Tritech_all$slant_range_m == 9.99] <- NA
-  
-  #Drop unused columns and write .CSV MasterLog for the altitude_m
-  Tritech_all <- Tritech_all[c("date_time", "slant_range_m")]
-  write.csv(Tritech_all, paste(save_dir,"Tritech_SlantRange_MasterLog.csv", sep = "/"), 
-            quote = F, row.names = F)
+  # Summary
+  summary(Tritech_all)
+  #   write.csv(Tritech_all, paste(save_dir,"Tritech_SlantRange_MasterLog.csv", sep ="/"), 
+  #             quote = F, row.names = F)
 }
 
-
-########################STEP 5 - READ IN MINIZEUS ZOOM, FOCUS, APERTURE AND CREATE MASTER LOG##################################
-
-#List files and read into one larger file. This is a comma seperate record, but some files have more columns than others, so need to
-#read in files without comma delimeters to start. Use the semi-colon as a bogus delimeter.
+#======================#
+#      MiniZeus ZFA    #
+#======================#
 
 # List files
-MiniZeus_ZFA_files <- list.files(ASDL_dir, pattern = "^MiniZeus", full.names = T)
-
-# Run if MiniZeus_ZFA_files exist
-if(length(MiniZeus_ZFA_files != 0)){
-  MiniZeus_ZFA_all <- NULL
-  # Loop
-  for(f in MiniZeus_ZFA_files){
-    tmp <- read.csv(f, header=F, colClasses = "character")
-    MiniZeus_ZFA_all <- bind_rows(MiniZeus_ZFA_all, tmp)
-  }
-  
-  #Remove and rows with NA values. Choose any column to search for NA values.
-  MiniZeus_ZFA_all <- filter(MiniZeus_ZFA_all, !is.na(V2))
-  
-  #Locate date stamp values and time stamp values. 
-  #Replace period in timestamp value with a colon. Parse date_time.
-  MiniZeus_ZFA_all$date <- str_extract(MiniZeus_ZFA_all$V1, "\\d{8}")
-  MiniZeus_ZFA_all$time <- str_extract(MiniZeus_ZFA_all$V1, "\\d{2}\\:\\d{2}\\.\\d{2}")
-  MiniZeus_ZFA_all$time <- gsub("\\.",":",MiniZeus_ZFA_all$time)
-  MiniZeus_ZFA_all$date_time <- ymd_hms(paste(MiniZeus_ZFA_all$date, 
-                                              MiniZeus_ZFA_all$time, sep = " "))
-  
-  #Impute the time series, before filtering out any values
-  full <- na_interpolation(as.numeric(MiniZeus_ZFA_all$date_time))
-  MiniZeus_ZFA_all$date_time <- as.integer(full) #Put it back into the data frame as an integer, for filtering purposes.
-  
-  #Remove duplicate values, convert the date_time back to a POSIXct object.
-  MiniZeus_ZFA_all <- MiniZeus_ZFA_all[!duplicated(MiniZeus_ZFA_all$date_time),]
-  MiniZeus_ZFA_all$date_time <- as.POSIXct(MiniZeus_ZFA_all$date_time, 
-                                           origin = "1970-01-01", tz = "UTC") #Standard R origin value
-  
-  #Drop unused columns, rename kept columns and write .CSV MasterLog for the altitude_m
-  MiniZeus_ZFA_all <- MiniZeus_ZFA_all[c("date_time","V3","V5","V7")]
-  names(MiniZeus_ZFA_all) <- c("date_time","zoom_percent","focus_percent","aperture_percent")
-  MiniZeus_ZFA_all$zoom_percent <- as.numeric(MiniZeus_ZFA_all$zoom_percent)
-  MiniZeus_ZFA_all$focus_percent <- as.numeric(MiniZeus_ZFA_all$focus_percent)
-  MiniZeus_ZFA_all$aperture_percent <- as.numeric(MiniZeus_ZFA_all$aperture_percent)
-  write.csv(MiniZeus_ZFA_all, paste(save_dir,"MiniZeus_ZFA_MasterLog.csv", sep = "/"), 
-            quote = F, row.names = F)
+ZFA_files <- list.files(pattern = "^MiniZeus", path = ASDL_dir, full.names = T)
+# Run if slant_files exist
+if( length(ZFA_files) > 0 ){
+  # Apply function in parallel
+  zfalist <- future_lapply(ZFA_files, FUN=readASDL, type="minizeus")
+  # Bind into data frame
+  ZFA_all <- do.call("rbind", zfalist)
+  # Rename
+  names(ZFA_all) <- c("Datetime","zoom_percent","focus_percent","aperture_percent")
+  # Summary
+  summary(ZFA_all)
+  #   write.csv(ZFA_all, paste(save_dir,"MiniZeus_ZFA_MasterLog.csv", sep = "/"), 
+  # quote = F, row.names = F)
 }
 
-# dim 1147887 
+#======================#
+#        RBR CTD       #
+#======================#
 
-# original version
-
-MiniZeus_ZFA_files <- list.files(ASDL_dir, pattern = "MiniZeus", full.names = T)
-
-if(length(MiniZeus_ZFA_files) != 0)
-{
-  
-  for(i in 1:length(MiniZeus_ZFA_files))
-  {
-    name <- as.character(i)
-    assign(name, read_csv(MiniZeus_ZFA_files[i], skip = 1, col_names = F, col_types = cols(X1 = "c", X2 = "c", X3 = 'c', X4 = 'c', X5 = 'c',
-                                                                                           X6 = "c", X7 = "c")))
-    if(name == "1")
-    {MiniZeus_ZFA_all <- get(name)
-    }else MiniZeus_ZFA_all <- bind_rows(MiniZeus_ZFA_all, get(name))
-    rm(list = c(i))
-  }
-  
-  #Remove and rows with NA values. Choose any column to search for NA values.
-  
-  MiniZeus_ZFA_all <- filter(MiniZeus_ZFA_all, !is.na(X2))
-  
-  
-  #Locate date stamp values and time stamp values. Replace period in timestamp value with a colon. Parse date_time.
-  
-  MiniZeus_ZFA_all$date <- str_extract(MiniZeus_ZFA_all$X1, "\\d{8}")
-  MiniZeus_ZFA_all$time <- str_extract(MiniZeus_ZFA_all$X1, "\\d{2}\\:\\d{2}\\.\\d{2}")
-  MiniZeus_ZFA_all$time <- gsub("\\.",":",MiniZeus_ZFA_all$time)
-  MiniZeus_ZFA_all$date_time <- ymd_hms(paste(MiniZeus_ZFA_all$date, MiniZeus_ZFA_all$time, sep = " "))
-  
-  #Impute the time series, before filtering out any values
-  
-  full <- na_interpolation(as.numeric(MiniZeus_ZFA_all$date_time))
-  MiniZeus_ZFA_all$date_time <- as.integer(full) #Put it back into the data frame as an integer, for filtering purposes.
-  
-  #Remove duplicate values, convert the date_time back to a POSIXct object.
-  
-  MiniZeus_ZFA_all <- MiniZeus_ZFA_all[!duplicated(MiniZeus_ZFA_all$date_time),]
-  MiniZeus_ZFA_all$date_time <- as.POSIXct(MiniZeus_ZFA_all$date_time, origin = "1970-01-01", tz = "UTC") #Standard R origin value
-  
-  #Drop unused columns, rename kept columns and write .CSV MasterLog for the altitude_m
-  
-  MiniZeus_ZFA_all <- MiniZeus_ZFA_all[,c(10,3,5,7)]
-  names(MiniZeus_ZFA_all) <- c("date_time","zoom_percent","focus_percent","aperture_percent")
-  write.csv(MiniZeus_ZFA_all, paste(save_dir,"MiniZeus_ZFA_MasterLog.csv", sep = "/"), quote = F, row.names = F)
-  
-}
-  
-  # dim 1148113 
-
-
-##########################STEP 6 - READ IN THE RBR CTD LOG FROM ASDL########################################################
-
-#List files and read into one larger file. Some files will contain status information from the RBR while it is connected to Ruskin
-#these records include the text "Ready"; drop these records during the read in process.
-
-RBR_files <- list.files(ASDL_dir, pattern = "RBR", full.names = T)
-
-# if(length(RBR_files) != 0)
-# {
-
-temp <- data.frame()  
-  
-for(i in 1:length(RBR_files))
-{
-  name <- as.character(i)
-  assign(name, read_csv(RBR_files[i], col_names = paste0("X", seq_len(10)), col_types =cols(X1 = "c", X2 = "c", X3 = "c", X4 = "c", X5 = "c", X6 = "c",
-                                    X7 = "c", X8 = "c", X9 = "c", X10 = "c")))
-  temp <- get(name)
-  temp <- filter(temp, !str_detect(X1, "Re")) #Search for the first two characters in the word 'Ready". Drop these entries.
-  if(name == "1")
-  {RBR_all <- temp
-  }else RBR_all <- bind_rows(RBR_all, temp)
-  rm(list = c(i))
+# List files
+RBR_files <- list.files(pattern = "^RBR", path = ASDL_dir, full.names = T)
+# Run if slant_files exist
+if( length(RBR_files) > 0 ){
+  # Apply function in parallel
+  rbrlist <- future_lapply(RBR_files, FUN=readASDL, type="rbr")
+  # Bind into data frame
+  RBR_all <- do.call("rbind", rbrlist)
+  # Rename
+  names(RBR_all) <- c("Datetime","Conductivity_mS/cm","Temp_C","Pressure_dbar",
+                      "Dissolved_02_sat_%","Sea_Pressure_dbar", "Depth_m",
+                      "Salinity_PSU","Sound_Speed_m/s","Specific_Cond_uS/cm")
+  # Summary
+  summary(RBR_all)
+  #   write.csv(RBR_all, paste(save_dir,"RBR_CTD_MasterLog.csv", sep = "/"), 
+  # quote = F, row.names = F)
 }
 
-#Drop the ASDL timestamp value, if it is present.
+#=======================#
+#      GPS POSITION     #
+#=======================#
 
-RBR_all$X1 <- gsub("[[:print:]]{1,}>","",RBR_all$X1)
+# The heading data from this source is not used in subsequently, so was removed 
+# from processing to simplify
 
-#Located date stamp values and time stamp values. Replace period in timestamp value with a colon. Parse date_time.
-
-RBR_all$date <- str_extract(RBR_all$X1, "\\d{4}\\-\\d{2}\\-\\d{2}")
-RBR_all$time <- str_extract(RBR_all$X1, "\\d{2}\\:\\d{2}\\:\\d{2}")
-RBR_all$time <- gsub("\\.",":",RBR_all$time)
-RBR_all$date_time <- ymd_hms(paste(RBR_all$date, RBR_all$time, sep = " "))
-
-#Drop the records that failed to parse. Filter to 1 Hz.
-
-RBR_all <- filter(RBR_all, !is.na(RBR_all$date_time))
-RBR_all <- RBR_all[!duplicated(RBR_all$date_time),]
-
-#Remove any ASDL timestamps in the last water quality data column
-
-RBR_all$X10 <- gsub("<[[:print:]]{1,}>","",RBR_all$X10)
-
-#If any other columns are NA, drop them. 
-RBR_all <- filter(RBR_all, !is.na(X2))
-RBR_all <- RBR_all[,c(13,2:10)]
-names(RBR_all) <- c("date_time","Conductivity_mS/cm","Temp_C","Pressure_dbar","Dissolved_02_sat_%","Sea_Pressure_dbar",
-                    "Depth_m","Salinity_PSU","Sound_Speed_m/s","Specific_Cond_uS/cm")
-
-#Convert Depth column to numeric, drop any rows where the Depth is less than 1m (corresponding to on-deck time).
-RBR_all$Depth_m <- as.numeric(RBR_all$Depth_m) 
-RBR_all <- filter(RBR_all, Depth_m >= 1)
-
-#Write to .CSV
-
-write.csv(RBR_all, paste(save_dir,"RBR_CTD_MasterLog.csv", sep = "/"), quote = F, row.names = F)
-# }
-
-#########################################STEP 7 - READ IN THE HEMISPHERE GPS POSITION AND HEADING ################################
-
-#List files and read into one larger file. This is a comma seperate record, but some files have more columns than others, so need to
-#read in files by skipping the first line of each file to start. 
-
-Hemisphere_GPS_files <- list.files(ASDL_dir, pattern = "position", full.names = T)
-
-#if(length(Hemisphere_GPS_files != 0))
-#{
-for(i in 1:length(Hemisphere_GPS_files))
-{
-  name <- as.character(i)
-  assign(name, read_delim(Hemisphere_GPS_files[i], col_names = paste0("X",seq_len(15)), delim = ",", skip = 1, col_types = cols(X1 = "c", X2 = "c", X3 = "c",
-                          X4 = "c", X5 = "c", X6 = "c", X7 = "c", X8 = "c", X9 = "c", X10 = "c", X11 = "c", X12 = "c", X13 = "c",
-                          X14 = "c", X15 = "c")))
-  if(name == "1")
-  {Hemisphere_GPS_all <- get(name)
-  }else Hemisphere_GPS_all <- bind_rows(Hemisphere_GPS_all, get(name))
-  rm(list = c(i))
+# List files
+GPS_files <- list.files(pattern = "position", path = ASDL_dir, full.names = T)
+# Run if slant_files exist
+if( length(GPS_files) > 0 ){
+  # Apply function in parallel
+  gpslist <- future_lapply(GPS_files, FUN=readASDL, type="pos")
+  # Bind into data frame
+  GPS_all <- do.call("rbind", gpslist)
+  # Rename
+  names(GPS_all) <- c("Datetime","Latitude","Longitude")
+  # Summary
+  summary(GPS_all)
+  # Check
+  plot(GPS_all$Longitude, GPS_all$Latitude, asp=1)
+  #   write.csv(GPS_all, paste(save_dir,"Hemisphere_GPS_MasterLog.csv", sep = "/"), 
+  # quote = F, row.names = F)
 }
 
-#Filter out to only the $GPGGA, $GPZDA and $HEHDT strings.
-
-Hemisphere_GPS_all <- filter(Hemisphere_GPS_all, X1 == "$GPGGA" | X1 == "$GPZDA")
-
-#Located date stamp values and time stamp values in the $GPZDA strings. Parse the date_time. Ignore warnings.
-
-Hemisphere_GPS_all$date <- dmy(paste(Hemisphere_GPS_all$X3,Hemisphere_GPS_all$X4, Hemisphere_GPS_all$X5, sep = "-"))
-Hemisphere_GPS_all$X2 <- as.integer(Hemisphere_GPS_all$X2) 
-Hemisphere_GPS_all$time <- str_extract(Hemisphere_GPS_all$X2, "\\d{6}")
-Hemisphere_GPS_all$date_time <- ymd_hms(paste(Hemisphere_GPS_all$date, Hemisphere_GPS_all$time, sep = " "))
-
-#Impute the time series, before filtering out any values. Set it as an integer before putting back in to original DF, to get rid of
-#milliseconds.
-
-full <- na_interpolation(as.numeric(Hemisphere_GPS_all$date_time))
-full <- as.integer(full)
-Hemisphere_GPS_all$date_time <- as.POSIXct(full, origin = "1970-01-01", tz = "UTC") #Standard R origin value
-
-#Extract the degrees, minutes and seconds information. Combine to a single value with a space in-between.
-
-GPS_position <- filter(Hemisphere_GPS_all, X1 == "$GPGGA")
-GPS_position$Lat_deg <- str_extract(GPS_position$X3, "\\d{2}")
-GPS_position$Lat_min <- str_extract(GPS_position$X3, "\\d{2}\\.\\d{5,}")
-GPS_position$Long_deg <- str_extract(GPS_position$X5, "\\d{3}")
-GPS_position$Long_min <- str_extract(GPS_position$X5, "\\d{2}\\.\\d{5,}")
-GPS_position$Lat <- paste(GPS_position$Lat_deg, GPS_position$Lat_min, sep = " ")
-GPS_position$Long <- paste(GPS_position$Long_deg, GPS_position$Long_min, sep = " ")
-
-#Convert to decimal degrees, set to back to numeric
-
-GPS_position$Lat <- conv_unit(GPS_position$Lat, "deg_dec_min", "dec_deg")
-GPS_position$Long <- conv_unit(GPS_position$Long, "deg_dec_min", "dec_deg")
-
-#Drop unused columns. Remove milliseconds
-
-GPS_position <- GPS_position[,c(18,23:24)]
-
-#Extract Hemisphere Heading data. Drop unused columns. Remove milliseconds!
-#Heading string could be $GPHDT or $HEHDT (Hemisphere V100 ouputs $HEHDT, V500 outputs $GPHDT)
-
-Heading <- filter(Hemisphere_GPS_all, X1 == "$HEHDT" | X1 == "$GPHDT")
-Heading <- Heading[,c(18,2)]
-
-#Heading$date_time <- as_datetime(floor(seconds(Heading$date_time)))
 
 
-#Join the GPS Position and Heading data, remove duplicated timestamp first
 
-GPS_position <- GPS_position[!duplicated(GPS_position$date_time),]
-Heading <- Heading[!duplicated(Heading$date_time),]
-GPS_and_Heading <- left_join(GPS_position, Heading, by = "date_time")
-names(GPS_and_Heading) <- c("date_time","Lat","Long","Heading")
 
-#Roung GPS decimal degrees to the 7th decimal place. This is likely the limit of the device's accuracy.
 
-GPS_and_Heading$Lat <- as.numeric(GPS_and_Heading$Lat)
-GPS_and_Heading$Long <- as.numeric(GPS_and_Heading$Long)
-GPS_and_Heading$Long <- -GPS_and_Heading$Long  #Ensure that the longitude has a negative sign, to maintain compliance with calculate longitudes from 1_Hypack Data Parse script.
-GPS_and_Heading$Lat <- round(GPS_and_Heading$Lat, digits =  7)
-GPS_and_Heading$Long <- round(GPS_and_Heading$Long, digits = 7)
 
-#Write to a .CSV.
-
-write.csv(GPS_and_Heading, paste(save_dir,"Hemisphere_GPS_Heading_MasterLog.csv", sep = "/"), quote = F, row.names = F)
-
-#}
 
 #########################################STEP 8 - READ IN THE HEMISPHERE HEADING DATA ONLY###################################
 
