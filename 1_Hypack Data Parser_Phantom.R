@@ -70,6 +70,7 @@
 #          - option to keep all data, incl outside of transect start/stop times
 #          - merges padded start/end times with processed sensor data
 #          - attempted to make code more explicit, removed use of column order
+#          - also removed all get() functions
 ################################################################################
 
 

@@ -39,6 +39,7 @@
 #               col_names = paste0("X", seq_len(...)), where ... is the 
 #               explicitly stated number of columns, will control for this.
 # Jan 2021: - Created a function to load and process the datetime
+#           - Removed the need to convert from datetime to numeric back to dt
 #           - Applies that function to each file type
 #           - Use NA as nodata instead of -999
 ################################################################################
@@ -109,9 +110,9 @@ readASDL <- function( afile, type ){
     lapply(packages, require, character.only = TRUE)
     # Read in lines from ASDL files
     alines <- readLines(afile, skipNul=FALSE)
+    # If 'pos' crop to first GPZDA row, first row with datetime and 
+    # subset GPZDA and GPGGA rows only
     if ( type == "pos" ){
-      # Crop to first GPZDA row, first row with datetime and 
-      # subset GPZDA and GPGGA rows only
       alines <- alines[min(grep("GPZDA",alines)):length(alines)]
       alines <- alines[grep("GPZDA|GPGGA",alines)]
     } else {
@@ -124,19 +125,23 @@ readASDL <- function( afile, type ){
     # Bind lines together in dataframe, fills in blanks with NA
     ds_list <-  alines %>% strsplit(., ",") 
     ds <- map(ds_list, ~ c(X=.)) %>% bind_rows(.) %>% as.data.frame()
+    # Make a copy of X1 prior to datetime formatting
+    dtype <- ds$X1 # Copy first column
     # Keep only relevant columns based on type
     if( type == "rov" ) ds <- ds[,c("X1","X2","X3")]
     if( type == "tritech" ) ds <- ds[,c("X1","X4")]
     if( type == "minizeus" ) ds <- ds[,c("X1","X3","X5","X7")]
     if( type == "rbr" ) ds <- ds[,paste0("X", 1:10)]
     if( type == "pos" ) ds <- ds[,c("X1","X2","X3","X4","X5")]
+    if( type == "head" ) ds <- ds[,c("X1","X2")]
+    if( type == "track" ) ds <- ds[,paste0("X", c(1:2,4:18))]
+    if( type == "dvl" ) ds <- ds[,paste0("X", c(1,5:9))]
     # Extract datetime in X1
     if( type == "rbr" ){
       ds$X1 <- sub(".*[>]","", ds$X1)
       ds$X1 <- sub("[.].*","", ds$X1)
       ds$X1 <- ymd_hms(ds$X1)
     } else if( type == "pos" ){
-      dtype <- ds$X1 # Copy first column
       date_str <- paste0(ds$X5, ds$X4, ds$X3)
       date_str[dtype == "$GPGGA"] <- "19990909" # place holder to be removed
       time_str <- sub("[.].*","",ds$X2)
@@ -149,8 +154,7 @@ readASDL <- function( afile, type ){
       ds$X1 <- suppressWarnings(ymd_hms(paste(date_str, time_str, sep = " ")))
     }
     # Interpolate the datetime series to fill gaps
-    ds$X1 <- floor_date(as_datetime(na_interpolation(
-      as.numeric(ds$X1))), "second")
+    ds$X1 <- floor_date(as_datetime(na_interpolation(as.numeric(ds$X1))), "second")
     # For "pos" reformat lat/lon
     if( type == "pos" ){
       # Subset rows and columns GPS position
@@ -160,11 +164,18 @@ readASDL <- function( afile, type ){
                        (as.numeric(substring(ds$X3, 3, nchar(ds$X3)))/60), 7)
       ds$X5 <- -1 * round(as.numeric(substring(ds$X5, 1, 3)) + 
                             (as.numeric(substring(ds$X5, 4, nchar(ds$X5)))/60), 7)
+      # If heading subset GPHDT and HEHDT rows only
+    } else if ( type == "head" ){
+      ds <- ds[grep("GPHDT|HEHDT",dtype),]
     }
     # Remove duplicate time stamps
     ds <- ds[!duplicated(ds$X1),]
     # Set all columns except X1 as numeric
-    ds[,-1] <- apply(ds[,-1], 2, as.numeric)
+    if( ncol(ds) > 2 ){
+      ds[,-1] <- apply(ds[,-1], 2, as.numeric)
+    } else {
+      ds[,2] <- as.numeric(ds[,2])
+    }
     # Remove NA values by checking second row
     ds <- ds[!is.na(ds[,2]),]
     # Return
@@ -176,7 +187,6 @@ readASDL <- function( afile, type ){
     return(NULL)
   })    
 }
-
 
 
 #======================#
@@ -265,15 +275,17 @@ if( length(RBR_files) > 0 ){
   # quote = F, row.names = F)
 }
 
-#=======================#
-#      GPS POSITION     #
-#=======================#
+#=========================#
+#   HEMISPHERE POSITION   #
+#=========================#
 
+# Ship GPS backup
 # The heading data from this source is not used in subsequently, so was removed 
 # from processing to simplify
 
 # List files
-GPS_files <- list.files(pattern = "position", path = ASDL_dir, full.names = T)
+GPS_files <- list.files(pattern = "Hemisphere_position", 
+                        path = ASDL_dir, full.names = T)
 # Run if slant_files exist
 if( length(GPS_files) > 0 ){
   # Apply function in parallel
@@ -290,185 +302,86 @@ if( length(GPS_files) > 0 ){
   # quote = F, row.names = F)
 }
 
+#========================#
+#   HEMISPHERE HEADING   #
+#========================#
 
+# Question: In previous version GPROT were removed prior to datetime interp, but
+# that seems to be needed for the datetime for some files. Change to only filter
+# out after time interp. Is there a reason that shouldn't be done?
 
-
-
-
-
-
-#########################################STEP 8 - READ IN THE HEMISPHERE HEADING DATA ONLY###################################
-
-#List files and read into one larger file. This is a comma seperate record, but some files have more columns than others, so need to
-#read in files by skipping the first line of each file to start. 
-
-Hemisphere_Heading_files <- list.files(ASDL_dir, pattern = "heading", full.names = T)
-
-if(length(Hemisphere_Heading_files != 0))
-{
-for(i in 1:length(Hemisphere_Heading_files))
-{
-  name <- as.character(i)
-  assign(name, read_delim(Hemisphere_Heading_files[i], col_names = F, delim = ",", skip = 1, col_types = cols(X1 = "c", X2 = "c", X3 = "c")))
-  if(name == "1")
-  {Hemisphere_Heading_all <- get(name)
-  }else Hemisphere_Heading_all <- bind_rows(Hemisphere_Heading_all, get(name))
-  rm(list = c(i))
+# List files
+head_files <- list.files(pattern = "Hemisphere_heading", 
+                         path = ASDL_dir, full.names = T)
+# Run if slant_files exist
+if( length(head_files) > 0 ){
+  # Apply function in parallel
+  headlist <- future_lapply(head_files, FUN=readASDL, type="head")
+  # Bind into data frame
+  heading_all <- do.call("rbind", headlist)
+  # Rename
+  names(heading_all) <- c("Datetime","Ship_heading")
+  # Summary
+  summary(heading_all)
+  #   write.csv(GPS_all, paste(save_dir,"Hemisphere_Heading_MasterLog.csv", sep = "/"), 
+  # quote = F, row.names = F)
 }
 
-#Locate date stamp values and time stamp values. Replace period in timestamp value with a colon. Parse date_time.
+#===============#
+#   TRACKMAN   #
+#===============#
+# Question: Is this used in subsequent processing?
 
-Hemisphere_Heading_all$date <- str_extract(Hemisphere_Heading_all$X1, "\\d{8}")
-Hemisphere_Heading_all$time <- str_extract(Hemisphere_Heading_all$X1, "\\d{2}\\:\\d{2}\\.\\d{2}")
-Hemisphere_Heading_all$time <- gsub("\\.",":",Hemisphere_Heading_all$time)
-Hemisphere_Heading_all$date_time <- ymd_hms(paste(Hemisphere_Heading_all$date, Hemisphere_Heading_all$time, sep = " "))
-Hemisphere_Heading_all <- filter(Hemisphere_Heading_all, X1 != "$GPROT")
-
-#Impute the time series, before filtering out any values
-
-full <- na_interpolation(as.numeric(Hemisphere_Heading_all$date_time))
-full <- as.integer(full)
-Hemisphere_Heading_all$date_time <- full #Put it back into the data frame.
-Hemisphere_Heading_all <- filter(Hemisphere_Heading_all, X1 == "$GPHDT" | X1 == "$HEHDT")
-
-#Remove duplicate time stamps row. Convert back to a POSIXct object.
-
-Hemisphere_Heading_all <- Hemisphere_Heading_all[!duplicated(Hemisphere_Heading_all$date_time),]
-Hemisphere_Heading_all$date_time <- as.POSIXct(Hemisphere_Heading_all$date_time, origin = "1970-01-01", tz = "UTC") #Standard R origin value
-
-#Keep only the relevant columns, and write to a .CSV file.
-
-Hemisphere_Heading_all <- Hemisphere_Heading_all[,c(6,2)]
-names(Hemisphere_Heading_all) <- c("date_time","Ship_heading")
-write.csv(Hemisphere_Heading_all, paste(save_dir,"Hemisphere_Heading_MasterLog.csv", sep ="/"), quote = F, row.names = F)
+# List files
+track_files <- list.files(pattern = "^TrackMan", path = ASDL_dir, full.names = T)
+# Run if slant_files exist
+if( length(track_files) > 0 ){
+  # Apply function in parallel
+  tracklist <- future_lapply(track_files, FUN=readASDL, type="track")
+  # Bind into data frame
+  Track_all <- do.call("rbind", tracklist)
+  # Rename
+  names(Track_all) <- c("Datetime","Beacon_ID","Phase_Counts_A",
+                        "Phase_Counts_B","Phase_Counts_C","Quality_Factor",
+                        "Error_Code", "Target_Slant_Range_m","Depression_Angle",
+                        "Target_Bearing","DistanceX_m","DistanceY_m","DistanceZ_m",
+                        "Ship_Heading","TSS_Pitch","TSS_Roll","Temp_C")
+  # Summary
+  summary(Track_all)
+  #   write.csv(GPS_all, paste(save_dir,"TrackMan_Beacons_MasterLog.csv", sep = "/"), 
+  # quote = F, row.names = F)
 }
 
-#######################################STEP 9 - READ IN TRACKMAN DATA RECORDS####################################################
+#===================#
+#    ROWETech DVL   #
+#===================#
+# Question: Previously looked for -99.999 and 0 for out-of-bounds data
+# but there are other negative values, should all negatives be nodata?
 
-#List files and read into one larger file. This is a comma seperate record, but some files have more columns than others, so need to
-#read in files by skipping the first line of each file to start. 
-
-TrackMan_files <- list.files(ASDL_dir, pattern = "TrackMan", full.names = T)
-
-if(length(TrackMan_files) != 0)
-{  
-
-for(i in 1:length(TrackMan_files))
-{
-  name <- as.character(i)
-  assign(name, read_delim(TrackMan_files[i], col_names = F, delim = ",", skip = 1, col_types = cols(X1 = "c", X2 = "c", X3 = "c",
-                          X4 = "c", X5 = "c", X6 = "c", X7 = "c", X8 = "c", X9 = "c", X10 = "c", X11 = "c", X12 = "c", X13 = "c",
-                          X14 = "c", X15 = "c", X16 = "c", X17 = "c", X18 = "c", X19 = "c")))
-  if(name == "1")
-  {TrackMan_all <- get(name)
-  }else TrackMan_all <- bind_rows(TrackMan_all, get(name))
-  rm(list = c(i))
-}
-
-#Parse date time from ASDL timestamp entries.
-
-TrackMan_all$date <- str_extract(TrackMan_all$X1, "\\d{8}")
-TrackMan_all$time <- str_extract(TrackMan_all$X1, "\\d{2}\\:\\d{2}\\.\\d{2}")
-TrackMan_all$time <- gsub("\\.",":",TrackMan_all$time)
-TrackMan_all$date_time <- ymd_hms(paste(TrackMan_all$date, TrackMan_all$time, sep = " "))
-
-#Impute the time series, before filtering out any values
-
-full <- na_interpolation(as.numeric(TrackMan_all$date_time))
-TrackMan_all$date_time <- as.integer(full) #Put it back into the data frame as an integer, for filtering purposes.
-
-#Remove duplicate values, convert the date_time back to a POSIXct object.
-
-TrackMan_all <- TrackMan_all[!duplicated(TrackMan_all$date_time),]
-TrackMan_all$date_time <- as.POSIXct(TrackMan_all$date_time, origin = "1970-01-01", tz = "UTC") #Standard R origin value
-
-#Re-arrange columns 
-
-TrackMan_all <- TrackMan_all[,c(22,2,4:18)]
-names(TrackMan_all) <- c("date_time","Beacon_ID","Phase_Counts_A","Phase_Counts_B","Phase_Counts_C","Quality_Factor","Error_Code",
-                         "Target_Slant_Range_m","Depression_Angle","Target_Bearing","DistanceX_m","DistanceY_m","DistanceZ_m",
-                         "Ship_Heading","TSS_Pitch","TSS_Roll","Temp_C")
-
-#Write to a .CSV 
-
-write.csv(TrackMan_all, paste(save_dir,"TrackMan_Beacons_MasterLog.csv", sep = "/"), quote = F, row.names = F)
+# List files
+DVL_files <- list.files(pattern = "DVL", path = ASDL_dir, full.names = T)
+# Run if slant_files exist
+if( length(DVL_files) > 0 ){
+  # Apply function in parallel
+  dvllist <- future_lapply(DVL_files, FUN=readASDL, type="dvl")
+  # Bind into data frame
+  DVL_all <- do.call("rbind", dvllist)
+  # Convert units
+  DVL_all[,paste0("X", 5:9)] <- DVL_all[,paste0("X", 5:9)] / 1000
+  # Set zeros and negative values to NA
+  DVL_all[,-1] <- apply(DVL_all[,-1], 2, function(x) ifelse(x <= 0, NA, x))
+  # Rename
+  names(DVL_all) <- c("Datetime","Bottom_X_Velocity_ms","Bottom_Y_Velocity_ms",
+                        "Bottom_Z_Velocity_ms","Bottom_3D_Velocity_ms","Altitude_m")
+  # Summary
+  summary(DVL_all)
+  #   write.csv(GPS_all, paste(save_dir,"ROWETECH_DVL_MasterLog.csv", sep = "/"), 
+  # quote = F, row.names = F)
 }
 
 
-####################################STEP 10 - READ IN ROWETech DVL DATA#############################################################
 
-#List files and read into one larger file. This is a comma seperate record, but some files have more columns than others, so need to
-#read in files by skipping the first line of each file to start. 
-
-DVL_files <- list.files(ASDL_dir, pattern = "DVL", full.names = T)
-
-if(length(DVL_files) != 0)
-{
-  
-for(i in 1:length(DVL_files))
-  {
-    name <- as.character(i)
-    assign(name, read_delim(DVL_files[i], col_names = paste0("X", seq_len(17)), delim = ",", skip = 1, col_types = cols(X1 = "c", X2 = "c", X3 = "c",
-                          X4 = "c", X5 = "c", X6 = "c", X7 = "c", X8 = "c", X9 = "c", X10 = "c", X11 = "c", X12 = "c", X13 = "c",
-                         X14 = "c", X15 = "c", X16 = "c", X17 = "c")))
-    if(name == "1")
-    {DVL_all <- get(name)
-    }else DVL_all <- bind_rows(DVL_all, get(name))
-    rm(list = c(i))
-}
-  
-#Parse date time from ASDL timestamp entries.
-  
-DVL_all$date <- str_extract(DVL_all$X1, "\\d{8}")
-DVL_all$time <- str_extract(DVL_all$X1, "\\d{2}\\:\\d{2}\\.\\d{2}")
-DVL_all$time <- gsub("\\.",":",DVL_all$time)
-DVL_all$date_time <- ymd_hms(paste(DVL_all$date, DVL_all$time, sep = " "))
-  
-#Impute the time series, before filtering out any values
-  
-full <- na_interpolation(as.numeric(DVL_all$date_time))
-DVL_all$date_time <- as.integer(full) #Put it back into the data frame as an integer, for filtering purposes.
-  
-#Remove duplicate values, convert the date_time back to a POSIXct object.
-  
-DVL_all <- DVL_all[!duplicated(DVL_all$date_time),]
-DVL_all$date_time <- as.POSIXct(DVL_all$date_time, origin = "1970-01-01", tz = "UTC") #Standard R origin value
-  
-#Re-arrange columns, drop rows with missing Altitude
-  
-DVL_all <- DVL_all[,c(20,5:9)]
-DVL_all <- filter(DVL_all, !is.na(X9))
-
-#Convert units to meters/sec
-
-DVL_all$X5 <- as.numeric(DVL_all$X5) / 1000
-DVL_all$X6 <- as.numeric(DVL_all$X6) / 1000
-DVL_all$X7 <- as.numeric(DVL_all$X7) / 1000
-DVL_all$X8 <- as.numeric(DVL_all$X8) / 1000
-DVL_all$X9 <- as.numeric(DVL_all$X9) / 1000
-
-#Bottom Velocity values of -99.999 and 0 indicate out of range readings convert these to -9999, to make consistent with out-of-range values for altitude.
-
-DVL_all$X6[DVL_all$X6 == 0] <- -9999
-DVL_all$X6[DVL_all$X6 == -99.999] <- -9999
-DVL_all$X7[DVL_all$X7 == 0] <- -9999
-DVL_all$X7[DVL_all$X7 == -99.999] <- -9999
-DVL_all$X8[DVL_all$X8 == 0] <- -9999
-DVL_all$X8[DVL_all$X8 == -99.999] <- -9999
-
-#Altitude values of 0 indicate out of range readings; set these to -9999
-
-DVL_all$X9[DVL_all$X9 == 0] <- -9999
-
-#Rename columns
-
-names(DVL_all) <- c("date_time","Bottom_X_Velocity_ms","Bottom_Y_Velocity_ms","Bottom_Z_Velocity_ms","Bottom_3D_Velocity_ms",
-                    "Altitude_m")
-
-#Write to a .CSV 
-  
-write.csv(DVL_all, paste(save_dir,"ROWETECH_DVL_MasterLog.csv", sep = "/"), quote = F, row.names = F)
-}
+#- start here
 
 #############################################STEP 11 - READ IN VECTOR 12 KHZ SOUNDER DATA#############################################
 
