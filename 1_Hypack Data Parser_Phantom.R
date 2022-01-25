@@ -63,7 +63,7 @@
 #          - also removed all get() functions
 #          - exports all data together instead of by transect
 #          - Saves data processing log with warnings, errors and data summaries
-#          - Keeps coordinates in UTM for now instead of converting to lat/lon
+#          - Using terra instead of rgdal, accepts NA values
 ################################################################################
 
 
@@ -72,15 +72,15 @@
 # Packages and session options
 
 # Check for the presence of packages shown below, install if needed
-packages <- c("lubridate", "purrr", "dplyr", "zoo", "future.apply")
+packages <- c("lubridate", "purrr", "dplyr", "zoo", "future.apply", "terra")
 new_packages <- packages[!(packages %in% installed.packages()[,"Package"])]
 if(length(new_packages)) install.packages(new_packages)
 
-# Set the number of sig figs high, to facilitate inspection of UTM data records
-options(digits = 12)
-
 # Load required packages
 lapply(packages, require, character.only = TRUE)
+
+# Set the number of sig figs high, to facilitate inspection of UTM data records
+options(digits = 12)
 
 # Set multisession so future_lapply runs in parallel
 plan(multisession)
@@ -114,10 +114,6 @@ hypack_path <- file.path(wdir, project_folder, "Data/Raw")
 
 # Directory where dive log csv file is stored
 divelog_path <- file.path(wdir, project_folder, "Data/Dive_Logs/Dive_Log.csv")
-
-# Directory with ASDL master files
-Master_ASDL <- file.path(wdir, project_folder, 
-                         "Data/Advanced_Serial_Data_Logger/Full_Cruise")
 
 # Create directory for saving both clipped and unclipped .CSV files
 save_dir <- file.path(wdir, project_folder, "Data/Initial_Processed_Data")
@@ -183,7 +179,6 @@ cat("slant_pref = '", slant_pref, "'\n", sep="")
 cat("rogue_cam_pref = '", rogue_cam_pref, "'\n", sep="")
 cat("pos_secondary = '", pos_secondary, "'\n", sep="")
 cat("depth_secondary = '", depth_secondary, "'\n\n", sep="")
-
 
 
 
@@ -257,11 +252,9 @@ extractHypack <- function( hfile ){
 
 # List of hypack files
 hypack_files <- list.files(pattern = ".RAW", path = hypack_path, full.names = T)
-
 # Apply function across list of input files
 all_list <- future_lapply(hypack_files, FUN=extractHypack, future.seed=42)
 dat <- do.call("rbind", all_list)
-
 
 
 
@@ -311,7 +304,7 @@ print(summary(depths))
 #   Position   #
 #==============#
 # Message
-message("\nExtracting the ship position")
+message("\nExtracting the ROV and ship position")
 # Ships Position
 # device type == 'POS' device type
 # primary device == GPS_pref
@@ -320,11 +313,7 @@ ship_GPS_data <- dat[dat$Device_type == "POS" & dat$Device == GPS_pref,
 names(ship_GPS_data)[1:2] <- c("Ship_Easting","Ship_Northing")
 # Remove duplicated
 ship_gps <- ship_GPS_data[!duplicated(ship_GPS_data$Datetime),]
-# Summary
-print(summary(ship_gps))
 
-# Message
-message("\nExtracting the ROV position")
 # ROV position
 # device type == 'POS' device type
 # primary device == pos_pref
@@ -361,44 +350,75 @@ abline(a=0, b=1, col="red")
 if( is.na(positions$Beacon_Easting[1]) ){
   # First Beacon_Easting position
   f <- min(which(!is.na(positions$Beacon_Easting)))
-  positions$gaps[1] <- difftime(position_data$Datetime[f], 
+  positions$BeaconGaps[1] <- difftime(position_data$Datetime[f], 
                                 position_data$Datetime[1])
 }
 # Expand gap values
-positions$gaps <- na.locf(positions$gaps, fromLast = FALSE)
+positions$BeaconGaps <- na.locf(positions$BeaconGaps, fromLast = FALSE)
 # Warn: filling in gap values with non-primary data sources
-if( any(positions$gaps > 60 & is.na(positions$Beacon_Northing)) ){
+if( any(positions$BeaconGaps > 60 & is.na(positions$Beacon_Northing)) ){
   warning("Gaps greater than 60 seconds exist in the primary position sensor.\n", 
           "Attempting to fill using secondary source then ship position.")
 }
 # Replace primary with secondary when primary is NA for more than 60 seconds
-positions$Beacon_Northing <-ifelse( positions$gaps > 60 & 
+positions$Beacon_Northing <-ifelse( positions$BeaconGaps > 60 & 
                                       is.na(positions$Beacon_Northing), 
                                      positions$Beacon_Northing2, 
                                      positions$Beacon_Northing )
-positions$Beacon_Easting <- ifelse( positions$gaps > 60 & 
+positions$Beacon_Easting <- ifelse( positions$BeaconGaps > 60 & 
                                       is.na(positions$Beacon_Easting), 
                                     positions$Beacon_Easting2, 
                                     positions$Beacon_Easting )
 # Then, replace remaining primary gaps over 60 with ship
-positions$Beacon_Northing <-ifelse( positions$gaps > 60 & 
+positions$Beacon_Northing <-ifelse( positions$BeaconGaps > 60 & 
                                       is.na(positions$Beacon_Northing), 
                                     positions$Ship_Northing, 
                                     positions$Beacon_Northing )
-positions$Beacon_Easting <- ifelse( positions$gaps > 60 & 
+positions$Beacon_Easting <- ifelse( positions$BeaconGaps > 60 & 
                                       is.na(positions$Beacon_Easting), 
                                     positions$Ship_Easting, 
                                     positions$Beacon_Easting )
 # Add source field
-positions$PositionSource <- "Primary"
-positions$PositionSource[is.na(positions$Beacon_Easting)] <- ""
-positions$PositionSource[positions$Beacon_Easting == 
-                           positions$Beacon_Easting2] <- "Secondary"
-positions$PositionSource[positions$Beacon_Easting == 
-                           positions$Ship_Easting] <- "Ships"
+positions$BeaconSource <- "Primary"
+positions$BeaconSource[is.na(positions$Beacon_Easting)] <- NA
+positions$BeaconSource[positions$Beacon_Easting == 
+                         positions$Beacon_Easting2] <- "Secondary"
+positions$BeaconSource[positions$Beacon_Easting == 
+                         positions$Ship_Easting] <- "Ship"
+
+# Convert UTM to lat/lon
+# Empty lon and lat columns to fill
+positions$Beacon_Longitude <- NA
+positions$Beacon_Latitude <- NA
+positions$Ship_Longitude <- NA
+positions$Ship_Latitude <- NA
+# Loop through UTM zones
+for (z in unique(positions$Zone) ){
+  # Subset by zone
+  tmp <- filter(positions, Zone == z)
+  # Convert to vector layer
+  vb <- vect(tmp, geom=c("Beacon_Easting", "Beacon_Northing"),
+            crs=paste0("+proj=utm +zone=", z," +datum=WGS84 +units=m"))
+  vs <- vect(tmp, geom=c("Ship_Easting", "Ship_Northing"),
+            crs=paste0("+proj=utm +zone=", z," +datum=WGS84 +units=m"))
+  # Project to lat/lon
+  pb <- project(vb, "+proj=longlat +datum=WGS84")
+  ps <- project(vs, "+proj=longlat +datum=WGS84")
+  # Replace with lon and lat values for zone == z rows
+  # Round values to the 5th decimal, equivalent to ~ 1m precision
+  positions[positions$Zone == z,"Beacon_Longitude"] <- round(geom(pb)[, "x"],5)
+  positions[positions$Zone == z,"Beacon_Latitude"] <- round(geom(pb)[, "y"],5)
+  positions[positions$Zone == z,"Ship_Longitude"] <- round(geom(ps)[, "x"],5)
+  positions[positions$Zone == z,"Ship_Latitude"] <- round(geom(ps)[, "y"],5)
+}
+
 # Subset
-pos <- positions[c("Datetime","Zone", "PositionSource",
-                   "Beacon_Easting","Beacon_Northing")]
+pos <- positions[c("Datetime","Zone", "BeaconSource", "BeaconGaps",
+                   "Beacon_Longitude","Beacon_Latitude", 
+                   "Ship_Longitude","Ship_Latitude")]
+# Check
+plot(pos$Beacon_Longitude,pos$Beacon_Latitude, asp=1)
+points(pos$Ship_Longitude,pos$Ship_Latitude, col="blue")
 # Summary
 print(summary(pos))
 
@@ -508,11 +528,18 @@ message("\nCombining all sensor data")
 df_list <- list(pos, depths, headings, altitude, slant, speed, pitchroll)
 sdat <- Reduce(function(x, y) merge(x, y, by="Datetime", all=TRUE), 
                df_list, accumulate=FALSE)
+# Warn if missing UTM zones
+if( any(is.na(sdat$Zone)) ){
+  warning( "Removing ", length(which(is.na(sdat$Zone))), 
+           " rows because missing UTM zone info" )
+}
+# Remove any rows with NA values for UTM zone
+# Cannot fill in position datagaps without a zone
+sdat <- filter(sdat, !is.na(Zone))
+# Summary
 print(summary(sdat))
-
 # Sort by Datetime
 sdat <- sdat[order(sdat$Datetime),]
-
 
 
 #===============================================================================
@@ -549,7 +576,6 @@ for (i in 2:nrow(dlog)){
     dlog$Start_UTC_pad[i] <- dlog$End_UTC[i-1]
   }
 }
-
 # Generate a second-by-second sequence of datetimes from the start to finish 
 # of the on-transect portion of each dive. 
 slog <- NULL
@@ -565,7 +591,6 @@ for(i in 1:nrow(dlog)){
 # Save for use in later processing scripts
 save(slog, file=file.path(save_dir, "Dive_Times_1Hz.RData"))
 
-
 # Merge the hypack processed data with the 1 Hz  dive log sequence
 # Removes senor data that is not on-transect if onlyTransect == TRUE
 ondat <- merge(slog, sdat, by = "Datetime", all.x=T)
@@ -573,11 +598,16 @@ if( !onlyTransect ) {
   offdat <- merge(slog, sdat, by = "Datetime", all=T)
   offdat <- offdat[is.na(offdat$Transect_Name),]
 }
-
 # Message
 cat("\n", length(unique(ondat$Transect_Name)), "transects: \n")
 cat(paste0(unique(ondat$Transect_Name), collapse = "\n"), "\n")
-
+# Check
+# Map each transect
+for (i in unique(ondat$Transect_Name)){
+  tmp <- ondat[ondat$Transect_Name == i,]
+  plot(tmp$Ship_Longitude,tmp$Ship_Latitude, asp=1, main=i, pch=16, cex=.5)
+  points(tmp$Beacon_Longitude,tmp$Beacon_Latitude, col="blue", pch=16, cex=.5)
+}
 
 
 #===============================================================================
@@ -598,7 +628,6 @@ if( !onlyTransect ) {
   write.csv(offdat, file = file.path(save_dir, "HypackData_offTransect.csv"), 
             quote = F, row.names = F)
 }
-
 
 
 #===============================================================================

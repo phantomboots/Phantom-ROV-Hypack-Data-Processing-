@@ -68,11 +68,11 @@ packages <- c("lubridate","dplyr","stringr","imputeTS","purrr",
 new_packages <- packages[!(packages %in% installed.packages()[,"Package"])]
 if(length(new_packages)) install.packages(new_packages)
 
-# Force display of long digit numbers
-options(digits = 12)
-
 # Load required packages
 lapply(packages, require, character.only = TRUE)
+
+# Force display of long digit numbers
+options(digits = 12)
 
 # Set multisession so future_lapply runs in parallel
 plan(multisession)
@@ -81,16 +81,21 @@ plan(multisession)
 #===============================================================================
 # STEP 1 - SET PATHS AND OFFSETS, MAKE EXPORT DIRECTORY
 
+# Set working directory
+# Use getwd() if you are already in the right directory
+# The project folder and needs to be in the working directory
+wdir <- getwd() 
+
 # Enter Project folder name
 project_folder <- "Pac2021-054_phantom"
 
 # Directory where the ASDL files are stored
 # Path must start from your working directory, check with getwd(), or full paths
-ASDL_dir <- file.path(project_folder, "Data/Advanced_Serial_Data_Logger")
+ASDL_dir <- file.path(wdir, project_folder, "Data/Advanced_Serial_Data_Logger")
 
 # Set the directory for saving of the master files.
 # Path must start from your working directory, check with getwd(), or full paths
-save_dir <- file.path(project_folder, "Data/Advanced_Serial_Data_Logger/Full_Cruise")
+save_dir <- file.path(wdir, project_folder, "Data/Advanced_Serial_Data_Logger/Full_Cruise")
 dir.create(save_dir, recursive = TRUE) # Will warn if already exists
 
 # Offset values for IMUs located in the Phantom's subsea can and on the MiniZeus
@@ -103,8 +108,8 @@ rov_roll_offset <- -1
 
 # Set the maximum distance (in meters) that can occur between the ROV and ship
 # Will differ depending on the ROV
-# Question - what is this distance for phantom and boots?
-max_dist <- 200
+# Question - what is this distance for phantom (100m) and boots (1000m)?
+max_dist <- 100
 
 
 #===============================================================================
