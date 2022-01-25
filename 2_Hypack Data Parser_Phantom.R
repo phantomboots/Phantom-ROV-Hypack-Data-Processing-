@@ -1,5 +1,5 @@
 #===============================================================================
-# Script Name: 1_Hypack Data Parser_Phantom.R
+# Script Name: 2_Hypack Data Parser_Phantom.R
 #
 # Script Function: This script is designed to unpack the Hypack .LOG files, and 
 # to extract various pieces of the data that are contained within the logs. The 
@@ -67,10 +67,13 @@
 #          - negative no data values classed as NA instead of -999
 #          - gives option for transect padding, default to 2 min
 #          - removes any time overlap between transects caused by padding
-#          - option to keep all data, incl outside of transect start/stop times
 #          - merges padded start/end times with processed sensor data
+#          - option to save off transect data too
 #          - attempted to make code more explicit, removed use of column order
 #          - also removed all get() functions
+#          - exports all data together instead of by transect
+#          - Saves data processing log with warnings, errors and data summaries
+#          - Keeps coordinates in UTM for now instead of converting to lat/lon
 ################################################################################
 
 
@@ -79,8 +82,7 @@
 # Packages and session options
 
 # Check for the presence of packages shown below, install if needed
-packages <- c("lubridate", "sp", "readxl", "readr", "purrr",
-              "dplyr", "stringr", "rgdal", "zoo")
+packages <- c("lubridate", "purrr", "dplyr", "zoo", "future.apply")
 new_packages <- packages[!(packages %in% installed.packages()[,"Package"])]
 if(length(new_packages)) install.packages(new_packages)
 
@@ -90,6 +92,8 @@ options(digits = 12)
 # Load required packages
 lapply(packages, require, character.only = TRUE)
 
+# Set multisession so future_lapply runs in parallel
+plan(multisession)
 
 
 #===============================================================================
@@ -99,26 +103,34 @@ lapply(packages, require, character.only = TRUE)
 padtime <- 2
 
 # Should hypack sensor data be clipped to on-transect times only?
-# TRUE for on-transect, FALSE for all data including water column
+# TRUE for on-transect only
+# FALSE for exporting additional off-transect sensor data too
 onlyTransect <- TRUE
 
 
 #===============================================================================
 # STEP 1 - SET PATHS AND MAKE EXPORT DIRECTORY
 
+# Set working directory
+# Use getwd() if you are already in the right directory
+# The project folder and needs to be in the working directory
+wdir <- getwd() 
+
 # Enter Project folder
 project_folder <- "Pac2021-054_phantom"
 
 # Directory where Hypack .RAW files are stored
-# Path must start from your working directory, check with getwd(), or full paths
-hypack_path <- file.path(project_folder, "Data/Raw")
+hypack_path <- file.path(wdir, project_folder, "Data/Raw")
 
 # Directory where dive log csv file is stored
-# Path must start from your working directory, check with getwd(), or full paths
-divelog_path <- file.path(project_folder, "Data/Dive_Logs/Dive_Log.csv")
+divelog_path <- file.path(wdir, project_folder, "Data/Dive_Logs/Dive_Log.csv")
+
+# Directory with ASDL master files
+Master_ASDL <- file.path(wdir, project_folder, 
+                         "Data/Advanced_Serial_Data_Logger/Full_Cruise")
 
 # Create directory for saving both clipped and unclipped .CSV files
-save_dir <- file.path(project_folder, "Data/Initial_Processed_Data")
+save_dir <- file.path(wdir, project_folder, "Data/Initial_Processed_Data")
 dir.create(save_dir, recursive = TRUE) # Will warn if already exists
 
 
@@ -150,7 +162,43 @@ depth_secondary <- "ROV_Heading_Depth_UTurns" # Dev 5
 
 
 #===============================================================================
-# STEP 3 - READ IN RAW DATA
+# STEP 3 - START LOG FILE
+
+# Sink output to file
+rout <- file( file.path(save_dir, "Hypack_Data_Parser.log" ), open="wt" )
+sink( rout, split = TRUE ) # display output on console and send to log file
+sink( rout, type = "message" ) # send warnings to log file
+options(warn=1) # print warnings as they occur
+
+# Start the timer
+sTime <- Sys.time( )
+
+# Messages
+message("Parsing ", project_folder, " project data on ", Sys.Date(), "\n")
+message("Padding start and end of transects by ", padtime, " minutes\n")
+message("Only export on-transect data? ", onlyTransect, "\n")
+
+# Print device types and names
+cat("Device types:\n")
+cat(paste0(device_types, collapse = ", "), "\n")
+cat("\nDevice names:\n")
+cat("ship_heading_pref = '", ship_heading_pref, "'\n", sep="")
+cat("GPS_pref = '", GPS_pref, "'\n", sep="")
+cat("depth_pref = '", depth_pref, "'\n", sep="")
+cat("pos_pref = '", pos_pref, "'\n", sep="")
+cat("phantom_heading_pref = '", phantom_heading_pref, "'\n", sep="")
+cat("speed_pref = '", speed_pref, "'\n", sep="")
+cat("altitude_pref = '", altitude_pref, "'\n", sep="")
+cat("slant_pref = '", slant_pref, "'\n", sep="")
+cat("rogue_cam_pref = '", rogue_cam_pref, "'\n", sep="")
+cat("pos_secondary = '", pos_secondary, "'\n", sep="")
+cat("depth_secondary = '", depth_secondary, "'\n\n", sep="")
+
+
+
+
+#===============================================================================
+# STEP 4 - READ IN RAW DATA
 
 # Lists Hypack files, apply function to extract data on list of files, combine
 # extracted data into a single dataframe for entire cruise.
@@ -158,10 +206,11 @@ depth_secondary <- "ROV_Heading_Depth_UTurns" # Dev 5
 
 # Function to extract data from hypack file
 extractHypack <- function( hfile ){
-  
+  # Packages
+  packages <- c("lubridate","dplyr","purrr")
+  lapply(packages, require, character.only = TRUE)
   # Read in lines from hypack files
   hlines <- readLines(hfile)
-  
   # Extract device info 
   # Question: Could grep OFF offset info as well, could that be important?
   dev <- hlines[grepl("DEV", hlines)]
@@ -169,7 +218,6 @@ extractHypack <- function( hfile ){
     do.call(rbind, .) %>% as.data.frame()
   # Only need columns 2 and 4
   dev <- dev[,c("V2","V4")] 
-  
   # Extract UTM Zone
   # From the 3rd column of line 5
   longitude <- hlines[5] %>% strsplit(., " ") %>% 
@@ -182,12 +230,10 @@ extractHypack <- function( hfile ){
   # Check
   if(is.na(zone)) warning("Longitude does not match UTM zone 8, 9  or 10", 
                           call.= FALSE)
-  
   # Extract start day
   # from the 3rd column of line 9
   day <- hlines[9] %>% strsplit(., " ") %>% 
     unlist() %>% .[3] 
-  
   # Extract data stream
   # Start after EOH line
   startline <- which(grepl("EOH", hlines)) + 1
@@ -210,29 +256,27 @@ extractHypack <- function( hfile ){
     ds$Datetime[ds$X3 < ds$X3[1]] <- ymd_hms((mdy(day)+1) + 
                                                seconds(ds$X3[ds$X3 < ds$X3[1]]))
   }
-  
-  # Merge device and data stream tables.
+  # Merge device and data stream tables
   alldat <- merge(dev, ds, by.x = "V2", by.y = "X2")
   names(alldat)[1:3] <- c("ID", "Device", "Device_type")
   # Add UTM zone field
   alldat$Zone <- zone
-  
   # Return
   return(alldat)
 }
 
 # List of hypack files
-input_files <- list.files(pattern = ".RAW", path = hypack_path, full.names = T)
+hypack_files <- list.files(pattern = ".RAW", path = hypack_path, full.names = T)
 
 # Apply function across list of input files
-all_list <- lapply( input_files, FUN=extractHypack )
+all_list <- future_lapply(hypack_files, FUN=extractHypack, future.seed=42)
 dat <- do.call("rbind", all_list)
 
 
 
 
 #===============================================================================
-# STEP 4 - PROCESS SENSOR DATA
+# STEP 5 - PROCESS SENSOR DATA
 
 # Split sensor data into individual dataframes, process, then merge together, so
 # there is a field for each data type (e.g. depth, heading, etc.) in the final
@@ -242,19 +286,21 @@ dat <- do.call("rbind", all_list)
 #=============#
 #    Depth    #
 #=============#
+# Message
+message("\nExtracting depth")
 # device type == 'EC1' device type
 # primary device == depth_pref
 # secondary device == depth_secondary
 depth_data <- dat[dat$Device_type == "EC1" & dat$Device == depth_pref, 
                   c("X4", "Datetime")]
-names(depth_data)[1] <- "Depth"
+names(depth_data)[1] <- "Depth_m"
 depth_data2 <- dat[dat$Device_type == "EC1" & dat$Device == depth_secondary, 
                    c("X4", "Datetime")]
 names(depth_data2)[1] <- "Depth2"
 # Merge depths together with datetime
 depths <- merge(depth_data, depth_data2, by="Datetime", all=T)
 # Assign NA to all negative values
-depths$Depth[ depths$Depth < 0 ] <- NA
+depths$Depth_m[ depths$Depth_m < 0 ] <- NA
 depths$Depth2[ depths$Depth2 < 0 ] <- NA
 # Convert Depth 2 from feet to meters
 # Question: This was not done in previous version, should depth_secondary be in meters? 
@@ -262,19 +308,20 @@ depths$Depth2 <- depths$Depth2 * 3.28084
 # Remove duplicated
 depths <- depths[!duplicated(depths$Datetime),]
 # Plot, look for tight relationship between depth sensors
-plot(depths$Depth, depths$Depth2)
+plot(depths$Depth_m, depths$Depth2)
 abline(a=0, b=1, col="red")
 # Use depth_secondary to fill in gaps in depth_pref where possible
-depths$Depth <- ifelse( is.na(depths$Depth), depths$Depth2, depths$Depth )
-depths <- depths[c("Datetime","Depth")]
+depths$Depth <- ifelse( is.na(depths$Depth_m), depths$Depth2, depths$Depth_m )
+depths <- depths[c("Datetime","Depth_m")]
 # Summary
-summary(depths)
+print(summary(depths))
 
 
 #==============#
 #   Position   #
 #==============#
-
+# Message
+message("\nExtracting the ship position")
 # Ships Position
 # device type == 'POS' device type
 # primary device == GPS_pref
@@ -284,8 +331,10 @@ names(ship_GPS_data)[1:2] <- c("Ship_Easting","Ship_Northing")
 # Remove duplicated
 ship_gps <- ship_GPS_data[!duplicated(ship_GPS_data$Datetime),]
 # Summary
-summary(ship_gps)
+print(summary(ship_gps))
 
+# Message
+message("\nExtracting the ROV position")
 # ROV position
 # device type == 'POS' device type
 # primary device == pos_pref
@@ -356,103 +405,115 @@ positions$PositionSource[positions$Beacon_Easting ==
 pos <- positions[c("Datetime","Zone", "PositionSource",
                    "Beacon_Easting","Beacon_Northing")]
 # Summary
-summary(pos)
+print(summary(pos))
 
 
 #=============#
 #   Heading   #
 #=============#
+# Message
+message("\nExtracting the ROV and ship heading")
 # device type == 'GYR' device type
 # primary device == phantom_heading_pref
 # secondary device == ship_heading_pref
 rov_heading_data <- dat[dat$Device_type == "GYR" & dat$Device == phantom_heading_pref, 
                         c("X4", "Datetime")]
-names(rov_heading_data)[1] <- "rov_heading"
+names(rov_heading_data)[1] <- "ROV_heading"
 ship_heading_data <- dat[dat$Device_type == "GYR" & dat$Device == ship_heading_pref, 
                          c("X4", "Datetime")]
-names(ship_heading_data)[1] <- "ship_heading"
+names(ship_heading_data)[1] <- "Ship_heading"
 # Merge headings together with datetime
 headings <- merge(rov_heading_data, ship_heading_data, by="Datetime", all=T)
 # Assign NA to all negative values
-headings$rov_heading[ headings$rov_heading < 0 ] <- NA
-headings$ship_heading[ headings$ship_heading < 0 ] <- NA
+headings$ROV_heading[ headings$ROV_heading < 0 ] <- NA
+headings$Ship_heading[ headings$Ship_heading < 0 ] <- NA
 # Remove duplicated
 headings <- headings[!duplicated(headings$Datetime),]
 # Summary
-summary(headings)
+print(summary(headings))
 
 
 #=============#
 #   Altitude  #
 #=============#
+# Message
+message("\nExtracting altitude")
 # device type == 'DFT' device type
 # primary device == altitude_pref
 altitude_data <- dat[dat$Device_type == "DFT" & dat$Device == altitude_pref, 
                      c("X4", "Datetime")]
-names(altitude_data)[1] <- "altitude"
+names(altitude_data)[1] <- "Altitude_m"
 # Assign NA to all negative values
-altitude_data$altitude[ altitude_data$altitude < 0 ] <- NA
+altitude_data$Altitude_m[ altitude_data$Altitude_m < 0 ] <- NA
 # Remove duplicated
 altitude <- altitude_data[!duplicated(altitude_data$Datetime),]
 # Summary
-summary(altitude)
+print(summary(altitude))
 
 
 #=============#
 #    Slant    #
 #=============#
+# Message
+message("\nExtracting slant range")
 # device type == 'EC1' device type
 # primary device == slant_pref
 slant_data <- dat[dat$Device_type == "EC1" & dat$Device == slant_pref, 
                   c("X4", "Datetime")]
-names(slant_data)[1] <- "slant_range"
+names(slant_data)[1] <- "Slant_range_m"
 # Assign NA to all negative values
-slant_data$slant_range[ altitude_data$slant_range < 0 ] <- NA
+slant_data$Slant_range_m[ altitude_data$Slant_range_m < 0 ] <- NA
 # Remove duplicated
 slant <- slant_data[!duplicated(slant_data$Datetime),]
 # Summary
-summary(slant)
+print(summary(slant))
 
 
 #=============#
 #    Speed    #
 #=============#
+# Message
+message("\nExtracting ROV speed")
 # device type == 'HCP' device type
 # primary device == speed_pref
 speed_data <- dat[dat$Device_type == "HCP" & dat$Device == speed_pref, 
                   c("X4", "Datetime")]
-names(speed_data)[1] <- "speed"
+names(speed_data)[1] <- "Speed_kts"
 # Assign NA to all negative values
-speed_data$speed[ speed_data$speed < 0 ] <- NA
+speed_data$Speed_kts[ speed_data$Speed_kts < 0 ] <- NA
 # Remove duplicated
 speed <- speed_data[!duplicated(speed_data$Datetime),]
 # Summary
-summary(speed)
+print(summary(speed))
 
 
 #===============#
 #   Pitch/roll  #
 #===============#
+# Message
+message("\nExtracting Rogue pitch and roll")
 # device type == 'HCP' device type
 # primary device == rogue_cam_pref
 cam_data <- dat[dat$Device_type == "HCP" & dat$Device == rogue_cam_pref, 
                 c("X5", "X6", "Datetime")] # X4 was all zeros
-# Question: How to determine which is pitch and roll?
-names(cam_data)[1:2] <- c("roll","pitch")
+# Question: Confirm which is pitch and roll?
+names(cam_data)[1:2] <- c("Rogue_roll","Rogue_pitch")
 # Remove duplicated
 pitchroll <- cam_data[!duplicated(cam_data$Datetime),]
 # Summary
-summary(pitchroll)
+print(summary(pitchroll))
 
 
 #=============#
 #   Combine   #
 #=============#
+# Message
+message("\nCombining all sensor data")
 # Merge all together based on datetime
 df_list <- list(pos, depths, headings, altitude, slant, speed, pitchroll)
 sdat <- Reduce(function(x, y) merge(x, y, by="Datetime", all=TRUE), 
                df_list, accumulate=FALSE)
-summary(sdat)
+print(summary(sdat))
 
 # Sort by Datetime
 sdat <- sdat[order(sdat$Datetime),]
@@ -460,7 +521,7 @@ sdat <- sdat[order(sdat$Datetime),]
 
 
 #===============================================================================
-# STEP 5 - READ IN DIVE LOG AND MERGE WITH SENSOR DATA
+# STEP 6 - READ IN DIVE LOG AND MERGE WITH SENSOR DATA
 
 # Read in the start and end time from the Dive Log
 dlog <- read.csv(divelog_path)
@@ -512,151 +573,48 @@ save(slog, file=file.path(save_dir, "Dive_Times_1Hz.RData"))
 
 # Merge the hypack processed data with the 1 Hz  dive log sequence
 # Removes senor data that is not on-transect if onlyTransect == TRUE
-if( onlyTransect ){
-  alldat <- merge(slog, sdat, by = "Datetime", all.x=T)
-} else {
-  alldat <- merge(slog, sdat, by = "Datetime", all=T)
+ondat <- merge(slog, sdat, by = "Datetime", all.x=T)
+if( !onlyTransect ) {
+  offdat <- merge(slog, sdat, by = "Datetime", all=T)
+  offdat <- offdat[is.na(offdat$Transect_Name),]
 }
 
-# Save for use in later processing scripts
-save(alldat, file=file.path(save_dir, "SensorData_onTransects.RData"))
+# Message
+cat("\n", length(unique(ondat$Transect_Name)), "transects: \n")
+cat(paste0(unique(ondat$Transect_Name), collapse = "\n"))
+
 
 
 #===============================================================================
-# STEP 6 - WRITE CLIPPED .CSV FILES FOR EACH DIVE
+# STEP 7 - EXPORT DATA
 
-# Loop through the Dive Names in the all_data frames, write one .CSV 
-# for the clipped (on transect data) for each dive.
-for(j in unique(alldat$Transect_Name)){
-  to_write <- filter(alldat, Transect_Name == j)
-  write.csv(to_write, file = file.path(save_dir, paste0(j,".csv")), 
+# Transects only
+# Save as RData for use in later processing scripts
+save(ondat, file=file.path(save_dir, "HypackData_onTransect.RData"))
+# Save as CSV
+write.csv(ondat, file = file.path(save_dir, "HypackData_onTransect.csv"), 
+          quote = F, row.names = F)
+
+# Export off transect data as well if onlyTransect is FALSE
+if( !onlyTransect ) {
+  # Save as RData for use in later processing scripts
+  save(offdat, file=file.path(save_dir, "HypackData_offTransect.RData"))
+  # Save as CSV
+  write.csv(offdat, file = file.path(save_dir, "HypackData_offTransect.csv"), 
             quote = F, row.names = F)
 }
 
-# If onlyTransect is FALSE, then export all data as one additional CSV
-if ( !onlyTransect ){
-  write.csv(alldat, file = file.path(save_dir,"Alldata_OnOffTransects.csv"), 
-            quote = F, row.names = F)
-}
 
 
+# Print end of file message and elapsed time
+cat( "\nFinished: ", sep="" )
+print( Sys.time( ) - sTime )
 
-# To do
-# - Only export a single csv for on-transect
-# - Makes sense to do the interpolation to fill in gaps at this point before 
-#   converting to lat and long with NA values (not sure why step 13 is necessary now)
+# Stop sinking output
+sink( type = "message" )
+sink( )
+closeAllConnections()
 
 
 
 
-
-# 
-# ######################STEP 13 - CONVERT THE POSITION DATA TO DECIMAL DEGREES####################################
-# 
-# #In order to convert the data that is recorded by Hypack as UTM values, the position_all data frame needs to be converted to
-# #a SpatialPointsDataFrame, which is class in the package(sp), loaded by package(rgdal) at the start of this script. 
-# #SpatialPointsDataFrames cannot contain NA values, so these value must first be selected for and set aside, since some of these rows with NA
-# #values are still of interest, they are re-inserted into the data when the SpatialPointsDataFrame object is converted back to a regular data.frame
-# #SpatialPointsDataFrames also are restricted to a single coordinate reference system (CRS). Since different dives could conceivably by from different
-# #UTM zones (i.e. different CRS), the loop below splits the position data into seperate transects and load the appropriate CRS that corresponds to the UTM
-# #Zone that was set in Hypack for each particular dive.
-# 
-# #Empty data frames to fill with the ship and beacon values converted into decimal degree values for latitude and longitude.
-# ship_geographic <- data.frame()
-# main_beacon_geographic <- data.frame()
-# secondary_beacon_geographic <- data.frame()
-# 
-# #Strip NA values, generate spatial points DFs for each transect, transform to Lat/Longs, then save as a dataframe again.
-# for(i in unique(position_all$Transect_Name))
-# {
-#   main_beacon_no_NA <- filter(position_all, !is.na(Main_Beacon_Easting) & position_all$Transect_Name == i)
-#   ship_no_NA <- filter(position_all, !is.na(Ship_Easting) & position_all$Transect_Name == i)
-#   
-#   main_beacon_coordinates <- main_beacon_no_NA[, c("Main_Beacon_Easting","Main_Beacon_Northing")] # UTM coordinates for the AAE wide transponder
-#   ship_coordinates <- ship_no_NA[, c("Ship_Easting","Ship_Northing")] # UTM coordinates for the Ship GPS
-#   
-#   main_beacon_data <- main_beacon_no_NA[, c("date_time","Transect_Name","device","Gaps")] # data to keep
-#   ship_data <- as.data.frame(ship_no_NA[, c("date_time")]) # data to keep
-#   
-#   zone_num <- unique(position_all$zone[position_all$Transect_Name == i]) #Find the unique zone number value associate with each dive number, this might include an NA value.
-#   zone_num <- zone_num[!is.na(zone_num)] #Control for NA values; drop index values that may be NA, keeping only integer zone number values (8,9 or 10).
-#   crs <- CRS(paste0("+proj=utm +zone=", zone_num ," +datum=WGS84")) #proj4string of coordinates.
-#   
-#   #Assemble the spatial data points DF.
-#   
-#   main_beacon_spatial <- SpatialPointsDataFrame(coords = main_beacon_coordinates, data = main_beacon_data, proj4string = crs)
-#   ship_spatial <- SpatialPointsDataFrame(coords = ship_coordinates, data = ship_data, proj4string = crs)
-#   
-#   #Transform the UTMs coordinates into lat/longs, formatted as decimal degrees. Then turn it back into a regular DF.
-#   
-#   main_beacon_spatial <- spTransform(main_beacon_spatial, CRS("+proj=longlat +datum=WGS84"))
-#   ship_spatial <- spTransform(ship_spatial, CRS("+proj=longlat +datum=WGS84"))
-#   main_beacon_spatial <- as.data.frame(main_beacon_spatial)
-#   main_beacon_spatial <- main_beacon_spatial[,c(1:3,5:6)]
-#   ship_spatial <- as.data.frame(ship_spatial)
-#  
-#   
-#   #Add rows to empty data frames initialzed before this loop.
-#   main_beacon_geographic <- bind_rows(main_beacon_geographic, main_beacon_spatial)
-#   ship_geographic <- bind_rows(ship_geographic, ship_spatial)
-#   
-#   #Check to see if a secondary beacon was used during the transect before trying to generate the SP Data Frame object, if not (length = 0), skip trying
-#   #to process data from the secondary beacon. 
-#   current_transect <- filter(position_all, Transect_Name == i)
-#   if(length(which(!is.na(current_transect$Secondary_Beacon_Easting))) != 0)
-#   {
-#     secondary_beacon_no_NA <- filter(position_all, !is.na(Secondary_Beacon_Easting) & position_all$Transect_Name == i)
-#     secondary_beacon_coordinates <- secondary_beacon_no_NA[, c("Secondary_Beacon_Easting","Secondary_Beacon_Northing")] # UTM coordinates for the AAE wide transponder
-#     secondary_beacon_data <- secondary_beacon_no_NA[, c("date_time")] # data to keep
-#     secondary_beacon_spatial <- SpatialPointsDataFrame(coords = secondary_beacon_coordinates, data = secondary_beacon_data, proj4string = crs)
-#     secondary_beacon_spatial <- spTransform(secondary_beacon_spatial, CRS("+proj=longlat +datum=WGS84"))
-#     secondary_beacon_spatial <- as.data.frame(secondary_beacon_spatial)
-#     secondary_beacon_geographic <- bind_rows(secondary_beacon_geographic, secondary_beacon_spatial)
-#   }
-#   
-# }
-# 
-# #Rename the columns.
-# 
-# names(main_beacon_geographic) <- c("date_time","Transect_Name","device","Beacon_Long","Beacon_Lat")
-# names(ship_geographic) <- c("date_time","Ship_Long","Ship_Lat")
-# 
-# 
-# #Check to see if secondary beacon has any data; secondary beacon may not have been used. 
-# #If that is the case, fill the entries in the beacon dataframe containing Lat/Long values with 'NULL' entries.
-# if(exists("secondary_beacon_spatial")) 
-# {
-#   names(secondary_beacon_geographic) <- c("date_time","Transect_Name","device","Beacon_Long","Beacon_Lat")
-# } else {
-#   secondary_beacon_geographic <- full_seq
-#   secondary_beacon_geographic$Secondary_Beacon_Long <- rep("NULL",length(full_seq$date_time))
-#   secondary_beacon_geographic$Secondary_Beacon_Lat <- rep("NULL", length(full_seq$date_time))
-#   secondary_beacon_geographic <- secondary_beacon_geographic[, c(2:4)]
-# }  
-# 
-# #Slot the Long/Lat positions back in the position_all DF, and remove the northing and eastings
-# 
-# position_all <- left_join(position_all, main_beacon_geographic, by = "date_time")
-# position_all$Main_Beacon_Easting <- position_all$Main_Beacon_Long
-# position_all$Main_Beacon_Northing <- position_all$Main_Beacon_Lat
-# position_all <- left_join(position_all, secondary_beacon_geographic, by = "date_time")
-# position_all <- left_join(position_all, ship_geographic, by = "date_time")
-# 
-# 
-# position_all <- position_all[,c(1:3,12:17,8)]
-# names(position_all) <- c("date_time","Transect_Name","device","Main_Beacon_Long","Main_Beacon_Lat",
-#                          "Secondary_Beacon_Long","Secondary_Beacon_Lat","Ship_Long","Ship_Lat","Gaps")
-# 
-# #Round all Lat/Long values to the 5th decimal, equivalent to ~ 1m precision.
-# 
-# position_all$Main_Beacon_Lat <- round(position_all$Main_Beacon_Lat, digits = 5)
-# position_all$Main_Beacon_Long <- round(position_all$Main_Beacon_Long, digits = 5)
-# if(exists("secondary_beacon_spatial")) #As above, secondary beacon may not have been used. Skip next step if so.
-#   {
-#   position_all$Secondary_Beacon_Lat <- round(position_all$Secondary_Beacon_Lat, digits = 5)
-#   position_all$Secondary_Beacon_Long <- round(position_all$Secondary_Beacon_Long, digits = 5)
-#   }
-# position_all$Ship_Long <- round(position_all$Ship_Long, digits = 5)
-# position_all$Ship_Lat <- round(position_all$Ship_Lat, digits = 5)
-# 
-#

@@ -1,5 +1,5 @@
 #===============================================================================
-# Script Name: ASDL Data Processing_Phantom
+# Script Name: 1_ASDL Data Processing_Phantom
 # Script Function: Reads in the data files created by Advanced Serial Data 
 #   logger, parses each file and fills in missing date_time values. Disseminates 
 #   data to 1Hz and writes one master file for the whole cruise. Create files 
@@ -39,6 +39,7 @@
 #               col_names = paste0("X", seq_len(...)), where ... is the 
 #               explicitly stated number of columns, will control for this.
 # Jan 2021: - Created a function to load and process the datetime
+#           - Function catches errors and keeps going
 #           - Removed the need to convert from datetime to numeric back to dt
 #           - Applies that function to each file type
 #           - Use NA as nodata instead of -999
@@ -47,9 +48,7 @@
 #           - Saves data processing log with warnings, errors and data summaries
 ################################################################################
 
-# Notes - 
-# - then #3 uses this data to fill in hypack data, maybe do that here? and save
-#   3 just for interpolation
+
 
 #===============================================================================
 # Packages and session options
@@ -218,7 +217,7 @@ if( length(ROV_files) > 0 ){
   # Bind into dataframe
   ROV_all <- do.call("rbind", rovlist)
   # Rename
-  names(ROV_all) <- c("Datetime","Depth_m","Phantom_heading")
+  names(ROV_all) <- c("Datetime","Depth_m","ROV_heading")
   # Summary
   print(summary(ROV_all))
   # Write
@@ -241,7 +240,7 @@ if( length(Tritech_files) > 0 ){
   # Bind into dataframe
   Tritech_all <- do.call("rbind", trilist)
   # Rename
-  names(Tritech_all) <- c("Datetime","slant_range_m")
+  names(Tritech_all) <- c("Datetime","Slant_range_m")
   # Set values of 9.99 or 0 or less (out of range values) to NA
   # Question: Can slant range be less than zero?
   Tritech_all$slant_range_m[Tritech_all$slant_range_m <= 0] <- NA
