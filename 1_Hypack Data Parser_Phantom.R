@@ -601,6 +601,7 @@ if( !onlyTransect ) {
 
 
 
+#===============================================================================
 # Print end of file message and elapsed time
 cat( "\nFinished: ", sep="" )
 print( Sys.time( ) - sTime )
