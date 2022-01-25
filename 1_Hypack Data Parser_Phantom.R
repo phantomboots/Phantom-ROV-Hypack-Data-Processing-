@@ -1,5 +1,5 @@
 #===============================================================================
-# Script Name: 2_Hypack Data Parser_Phantom.R
+# Script Name: 1_Hypack Data Parser_Phantom.R
 #
 # Script Function: This script is designed to unpack the Hypack .LOG files, and 
 # to extract various pieces of the data that are contained within the logs. The 
@@ -13,27 +13,17 @@
 # The script design at this point is to merge all records from the .LOG files in 
 # the working directory into one 'master file', and to then use transect start/
 # end time to 'trim' the master file time series to the periods of interest. 
-# Specifically, data is trimmed to transect start/end times based on timestamps 
-# provided in an accompanying Dive Log file, which is assumed to be an MS Excel 
-# file with start/end times for each transect. 
+# Specifically, data is trimmed to transect start/end times based on divelog. 
 #
-# Relevant data are then extracted, one parameter at a time, from the trimmed 
-# master file. In some cases, the script will search for the preferred data 
-# source first (i.e. CTD depth, rather than onboard depth sensor) and will fall 
-# back to extracting the secondary source as required, while also writing a data 
-# flag to alert the user.
+# The script will search for the preferred data source first (i.e. CTD depth, 
+# rather than onboard depth sensor) and will fall back to extracting the 
+# secondary source as required, while also writing a data flag.
 #
-# In the particular case of position data records, the script will convert the 
-# projected UTM coordinates that are stored in the Hypack .LOG file into decimal 
-# degrees.
-#
-# All data is merged into separate data frame for each transect, and is written 
-# out as .CSV files.
-#
-# Script Author: Ben Snow
-# Script Date: Aug 27, 2019
-# R Version: 3.5.1
-#
+# Script Author: Ben Snow, adapted by Jessica Nephin
+# Script Date: Aug 27, 2019, adapted in Jan 2022
+# R Version: 3.5.1, version 4.0.2
+
+
 ################################################################################
 #                                           CHANGE LOG
 ################################################################################
@@ -374,8 +364,13 @@ if( is.na(positions$Beacon_Easting[1]) ){
   positions$gaps[1] <- difftime(position_data$Datetime[f], 
                                 position_data$Datetime[1])
 }
-# Fill in gap values to non-primary records
+# Expand gap values
 positions$gaps <- na.locf(positions$gaps, fromLast = FALSE)
+# Warn: filling in gap values with non-primary data sources
+if( any(positions$gaps > 60 & is.na(positions$Beacon_Northing)) ){
+  warning("Gaps greater than 60 seconds exist in the primary position sensor.\n", 
+          "Attempting to fill using secondary source then ship position.")
+}
 # Replace primary with secondary when primary is NA for more than 60 seconds
 positions$Beacon_Northing <-ifelse( positions$gaps > 60 & 
                                       is.na(positions$Beacon_Northing), 

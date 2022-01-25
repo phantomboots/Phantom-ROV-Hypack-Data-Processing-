@@ -1,23 +1,29 @@
 #===============================================================================
-# Script Name: 1_ASDL Data Processing_Phantom
+# Script Name: 2_ASDL Data Processing_Phantom
+#
 # Script Function: Reads in the data files created by Advanced Serial Data 
-#   logger, parses each file and fills in missing date_time values. Disseminates 
-#   data to 1Hz and writes one master file for the whole cruise. Create files 
-#   with the suffix '_MasterLog', for use in later steps. Processes records for 
-#   Phantom's Onboard Heading/Depth/Umbilical turns, Hemisphere GPS position and 
-#   heading, ROWETech DVL, Tritech Altimeter (Slant Range), Video Overlay string, 
-#   MiniZeus Zoom/Focus/Aperture, RBR CTD, MiniZeus and ROV pitch and roll and
-#   TrackMan data records. Each step is proceeded by and if() statement that 
-#   checks if data is present before attempting to process the records from a 
-#   particular device.
+#   logger, parses each file and fills in missing date_time values. Writes one 
+#   master file for the whole cruise. Create files with the suffix '_MasterLog', 
+#   for use in later scripts Processes records for:
+#   - Phantom's Onboard Heading/Depth/Umbilical turns
+#   - Hemisphere GPS position 
+#   - ROWETech DVL
+#   - Tritech Altimeter (Slant Range)
+#   - Video Overlay string
+#   - MiniZeus Zoom/Focus/Aperture
+#   - RBR CTD 
+#   - MiniZeus zoom, aperture and focus
+#   - MiniZeus pitch and roll
+#   - TrackMan data 
 #
 # NOTE: In 2021, the RogueCam pitch and roll was only read into Hypack, due 
 #   to a device hardware limitation. For this reason, there is no RogueCam 
 #   data processed by this script.
 #
-# Script Author: Ben Snow
-# Script Date: Sep 4, 2019
-# R Version: 3.5.1
+# Script Author: Ben Snow, adapted by Jessica Nephin
+# Script Date: Sep 4, 2019, adapted in Jan 2022
+# R Version: 3.5.1, version 4.0.2
+
 
 ################################################################################
 #                                   CHANGE LOG                                 #
