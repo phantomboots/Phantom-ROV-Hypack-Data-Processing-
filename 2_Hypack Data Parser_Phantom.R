@@ -581,7 +581,7 @@ if( !onlyTransect ) {
 
 # Message
 cat("\n", length(unique(ondat$Transect_Name)), "transects: \n")
-cat(paste0(unique(ondat$Transect_Name), collapse = "\n"))
+cat(paste0(unique(ondat$Transect_Name), collapse = "\n"), "\n")
 
 
 
