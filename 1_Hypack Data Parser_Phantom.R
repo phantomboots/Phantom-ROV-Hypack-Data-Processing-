@@ -327,8 +327,9 @@ names(position_data2)[1:2] <- c("Beacon_Easting2","Beacon_Northing2")
 # Sort primary by Datetime
 position_data <- position_data[order(position_data$Datetime),]
 # Calculate gap time in seconds between primary position records 
-position_data$gaps <- c( difftime(tail(position_data$Datetime, -1), 
-                                        head(position_data$Datetime, -1)), 0 )
+position_data$BeaconGaps <- as.numeric(
+  c( difftime(tail(position_data$Datetime, -1), 
+              head(position_data$Datetime, -1)), 0 ))
 
 # Merge primary, secondary and ship positions together using datetime and zone
 pos_list <- list(position_data, position_data2, ship_gps)
@@ -345,13 +346,13 @@ abline(a=0, b=1, col="red")
 plot(positions$Beacon_Easting, positions$Ship_Easting, asp=1)
 abline(a=0, b=1, col="red")
 
-# Check for NA in first Beacon_Easting (signal a gap at the start in the primary)
+# Check for NA in first Beacon_Easting (a gap at the start in the primary)
 # If there is a gap at the start, measure it in minutes
 if( is.na(positions$Beacon_Easting[1]) ){
   # First Beacon_Easting position
   f <- min(which(!is.na(positions$Beacon_Easting)))
-  positions$BeaconGaps[1] <- difftime(position_data$Datetime[f], 
-                                position_data$Datetime[1])
+  positions$BeaconGaps[1] <- as.numeric(difftime(positions$Datetime[f], 
+                                                 positions$Datetime[1]))
 }
 # Expand gap values
 positions$BeaconGaps <- na.locf(positions$BeaconGaps, fromLast = FALSE)
@@ -397,13 +398,13 @@ for (z in unique(positions$Zone) ){
   # Subset by zone
   tmp <- filter(positions, Zone == z)
   # Convert to vector layer
-  vb <- vect(tmp, geom=c("Beacon_Easting", "Beacon_Northing"),
-            crs=paste0("+proj=utm +zone=", z," +datum=WGS84 +units=m"))
-  vs <- vect(tmp, geom=c("Ship_Easting", "Ship_Northing"),
-            crs=paste0("+proj=utm +zone=", z," +datum=WGS84 +units=m"))
+  vb <- terra::vect(tmp, geom=c("Beacon_Easting", "Beacon_Northing"),
+                    crs=paste0("+proj=utm +zone=", z," +datum=WGS84 +units=m"))
+  vs <- terra::vect(tmp, geom=c("Ship_Easting", "Ship_Northing"),
+                    crs=paste0("+proj=utm +zone=", z," +datum=WGS84 +units=m"))
   # Project to lat/lon
-  pb <- project(vb, "+proj=longlat +datum=WGS84")
-  ps <- project(vs, "+proj=longlat +datum=WGS84")
+  pb <- terra::project(vb, "+proj=longlat +datum=WGS84")
+  ps <- terra::project(vs, "+proj=longlat +datum=WGS84")
   # Replace with lon and lat values for zone == z rows
   # Round values to the 5th decimal, equivalent to ~ 1m precision
   positions[positions$Zone == z,"Beacon_Longitude"] <- round(geom(pb)[, "x"],5)
@@ -411,14 +412,12 @@ for (z in unique(positions$Zone) ){
   positions[positions$Zone == z,"Ship_Longitude"] <- round(geom(ps)[, "x"],5)
   positions[positions$Zone == z,"Ship_Latitude"] <- round(geom(ps)[, "y"],5)
 }
-
+# Replace NaN with NA
+positions[is.na(positions)] <- NA
 # Subset
 pos <- positions[c("Datetime","Zone", "BeaconSource", "BeaconGaps",
                    "Beacon_Longitude","Beacon_Latitude", 
                    "Ship_Longitude","Ship_Latitude")]
-# Check
-plot(pos$Beacon_Longitude,pos$Beacon_Latitude, asp=1)
-points(pos$Ship_Longitude,pos$Ship_Latitude, col="blue")
 # Summary
 print(summary(pos))
 
@@ -528,14 +527,15 @@ message("\nCombining all sensor data")
 df_list <- list(pos, depths, headings, altitude, slant, speed, pitchroll)
 sdat <- Reduce(function(x, y) merge(x, y, by="Datetime", all=TRUE), 
                df_list, accumulate=FALSE)
-# Warn if missing UTM zones
-if( any(is.na(sdat$Zone)) ){
-  warning( "Removing ", length(which(is.na(sdat$Zone))), 
-           " rows because missing UTM zone info" )
-}
-# Remove any rows with NA values for UTM zone
-# Cannot fill in position datagaps without a zone
-sdat <- filter(sdat, !is.na(Zone))
+# Question - should records without a utm zone be removed here?
+# # Warn if missing UTM zones
+# if( any(is.na(sdat$Zone)) ){
+#   warning( "Removing ", length(which(is.na(sdat$Zone))), 
+#            " rows because missing UTM zone info" )
+# }
+# # Remove any rows with NA values for UTM zone
+# # Cannot fill in position datagaps without a zone
+# sdat <- filter(sdat, !is.na(Zone))
 # Summary
 print(summary(sdat))
 # Sort by Datetime

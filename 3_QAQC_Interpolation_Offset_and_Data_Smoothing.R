@@ -16,7 +16,8 @@
 # Script Author: Ben Snow
 # Script Date: Sep 9, 2019
 # R Version: 3.5.1
-#
+
+
 ################################################################################
 #                                    CHANGE LOG                                #
 ################################################################################
@@ -47,6 +48,7 @@
 # Aug 20, 2021: Added if() statement to check if the manual beacon tracking 
 #               script has been run, before trying to interpolate from this data 
 #               source. If this script has not been run, skip this portion.
+# Jan 2022: - 
 ################################################################################
 
 
@@ -108,10 +110,6 @@ smooth_window <- 31
 # of the total data set as the local weighting window).
 loess_span = 0.05
 
-# Export directory 
-final_dir <- file.path(project_folder,"Data/Secondary_Processed_Data")
-dir.create(final_dir, recursive = TRUE) # Will warn if already exists
-
 
 #===============================================================================
 # STEP 2 - READ IN THE HYPACK AND ASDL PROCESSED DATA 
@@ -121,9 +119,9 @@ Slant_Range_Master <- read.csv(file.path(ASDL_path,"Tritech_SlantRange_MasterLog
 Slant_Range_Master$Datetime <- ymd_hms(Slant_Range_Master$Datetime)
 MiniZeus_ZFA_Master <- read.csv(file.path(ASDL_path,"MiniZeus_ZFA_MasterLog.csv"))
 MiniZeus_ZFA_Master$Datetime <- ymd_hms(MiniZeus_ZFA_Master$Datetime)
-Manual_Tracking_Master <- read.csv(file.path(ASDL_path,"Manual_Beacon_Tracking_MasterLog.csv"))
-Manual_Tracking_Master$Datetime <- ymd_hms(Manual_Tracking_Master$Datetime)
-Manual_Tracking_Master$ID <- "Manual tracking backup"
+Manual_Track_Master <- read.csv(file.path(ASDL_path,"Manual_Beacon_Tracking_MasterLog.csv"))
+Manual_Track_Master$Datetime <- ymd_hms(Manual_Track_Master$Datetime)
+Manual_Track_Master$ID <- "Manual tracking backup"
 Hemisphere_Master <- read.csv(file.path(ASDL_path,"Hemisphere_GPS_MasterLog.csv"))
 Hemisphere_Master$Datetime <- ymd_hms(Hemisphere_Master$Datetime)
 Hemisphere_Master$ID <- "Ship GPS backup"
@@ -143,38 +141,62 @@ RBR_Master$ID <- "RBR CTD backup"
 load(file=file.path(hypack_path, "HypackData_onTransect.RData"))
 summary(ondat)
 
+
+
+
+
+# -- start here
+
+# notes - lots of repetition here
+#       - need to write a function that can fill in gaps for all variables and 
+#         inputs, with df to fill and df for filling as inputs, as well as type
+
+
+
+
+
 # Fill in missing position and depth data if it was missing from a file due to
-# Hypack crash (or failure to start logging!). First, check for any periods when
+# Hypack crash (or failure to start logging!). Check for any periods when
 # Hypack may have crashed. Fill in any such periods with the lat/long and 
 # heading data from the Ship_GPS data source (Hemisphere GPS).
-  
-  name <- i
-  assign(name, read_csv(i))
-  fill <- get(name)
-  temporary1 <- which(is.na(fill$Main_Beacon_Long) & fill$Gaps == T) #The indices where GAPS = T and Longitude is NA
-  temporary2 <- fill$date_time[temporary1] #The timestamps values at indices where GAPS = T and Longitude is NA
-  GPS_to_fill <- get("Hemisphere_Master") #Use quote since the object is outside of the environment of the for() loop.
-  index <- match(temporary2, GPS_to_fill$date_time)
-  fill$Main_Beacon_Long[temporary1] <- GPS_to_fill$Long[index] #The Long from the Ship GPS
-  fill$Main_Beacon_Lat[temporary1] <- GPS_to_fill$Lat[index]  #The Lat from the Ship GPS
-  fill$Position_Source[temporary1] <- GPS_to_fill$ID[index]
-  
+
+# Find indices with remaining ROV position gaps
+gapstofill <- which(is.na(ondat$Beacon_Longitude) & ondat$BeaconGaps > 60)
+# ) Find matching indices and try to fill gaps with ship's GPS backup
+matchrows1 <- match(ondat$Datetime[gapstofill], Hemisphere_Master$Datetime)
+ondat$Beacon_Longitude[gapstofill] <- Hemisphere_Master$Longitude[matchrows1]
+ondat$Beacon_Latitude[gapstofill] <- Hemisphere_Master$Latitude[matchrows1]
+ondat$BeaconSource[gapstofill] <- Hemisphere_Master$ID[matchrows1]
+# 2) Find matching indices and try to fill gaps with TrackMan manual ROV GPS
+# Will overwrite ships GPS backup if the indices overlap
+matchrows2 <- match(ondat$Datetime[gapstofill], Manual_Track_Master$Datetime)
+for (i in 1:length(gapstofill)){
+  g <- gapstofill[i]
+  m <- matchrows2[i]
+  # Only fill when there is a match (not na)
+  if( !is.na(m)){
+    ondat$Beacon_Longitude[g] <- Manual_Track_Master$Longitude[m]
+    ondat$Beacon_Latitude[g] <- Manual_Track_Master$Latitude[m]
+    ondat$BeaconSource[g] <- Manual_Track_Master$ID[m]
+  }
+}
+
+
+
 #Next, check and see if better position data can be retrieved from the manual 
 # tracking of the main beacon from data output by TrackMan, fill it in if possible. 
 # This code block checks to see if a Manual Tracking Master data frame exists before 
 # trying to execute.
   
-if(exists("Manual_Tracking_Master") == TRUE)
-{
-  Tracking_to_fill <- get("Manual_Tracking_Master")
-  index <- match(temporary2, Tracking_to_fill$date_time)
+
+  index <- match(ondat$Datetime[gapstofill], Manual_Tracking_Master$Datetime)
   swap <- which(!is.na(index))
   if(length(swap) != 0)
-  {fill$Main_Beacon_Long[temporary1] <- Tracking_to_fill$Beacon_Long[swap] 
-  fill$Main_Beacon_Lat[temporary1] <- Tracking_to_fill$Beacon_Lat[swap]  
-  fill$Position_Source[temporary1] <- Tracking_to_fill$ID[swap]
+  {fill$Main_Beacon_Long[temporary1] <- Manual_Tracking_Master$Beacon_Long[swap] 
+  fill$Main_Beacon_Lat[temporary1] <- Manual_Tracking_Master$Beacon_Lat[swap]  
+  fill$Position_Source[temporary1] <- Manual_Tracking_Master$ID[swap]
   }
-}
+
   
 #Same process for the Phantom heading, but data could be missing from different 
   # index locations. Create new index locator variables, specific to heading parameter
@@ -268,7 +290,8 @@ if(exists("Manual_Tracking_Master") == TRUE)
   
   assign(i, fill) #Re-assign the filled in data to the dive file
   rm(list = c("Tracking_to_fill","RBR_to_fill","GPS_to_fill","fill"))
-}
+
+  
 
 
 ############STEP 4 - COERCE THE LAT/LONGS TO A ZOO OBJECT AND INTERPOLATE MISSING POSITIONS##########
