@@ -55,8 +55,12 @@
 #           - Added manual calc of rov lat/lon from trackman
 #           - Fixed error in '2b_Manual Beacon Position Calculator.R' code that 
 #             used ship position instead of calculated position
+#           - Calculates speed in knots from DVL velocities
 ################################################################################
 
+
+# - something wrong with ROV_Heading_Depth_MasterLog.csv data, possibly
+#   heading and depth switched? Not using the right columns?
 
 
 #===============================================================================
@@ -428,11 +432,19 @@ if( length(DVL_files) > 0 ){
   DVL_all[,paste0("X", 5:9)] <- DVL_all[,paste0("X", 5:9)] / 1000
   # Set zeros and negative values to NA
   DVL_all[,-1] <- apply(DVL_all[,-1], 2, function(x) ifelse(x <= 0, NA, x))
+  # Calculate speed in knots
+  # Question: Are these the correct velocity components?
+  DVL_all$Speed_kts <- sqrt((DVL_all$Bottom_X_Velocity_ms)^2 + 
+                                  (DVL_all$Bottom_Y_Velocity_ms)^2)
+  DVL_all$Speed_kts <- DVL_all$Speed_kts * 1.94384 # m/s to knots
   # Rename
   names(DVL_all) <- c("Datetime","Bottom_X_Velocity_ms","Bottom_Y_Velocity_ms",
-                        "Bottom_Z_Velocity_ms","Bottom_3D_Velocity_ms","Altitude_m")
+                      "Bottom_Z_Velocity_ms","Bottom_3D_Velocity_ms",
+                      "Altitude_m","Speed_kts")
   # Summary
   print(summary(DVL_all))
+  # Check for high speeds
+  hist(DVL_all$Speed_kts, breaks=30)
   # Write
   write.csv(DVL_all, file.path(save_dir,"ROWETECH_DVL_MasterLog.csv"),
             quote = F, row.names = F)

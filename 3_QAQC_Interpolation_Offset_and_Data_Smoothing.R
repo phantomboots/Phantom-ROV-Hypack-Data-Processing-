@@ -48,7 +48,14 @@
 # Aug 20, 2021: Added if() statement to check if the manual beacon tracking 
 #               script has been run, before trying to interpolate from this data 
 #               source. If this script has not been run, skip this portion.
-# Jan 2022: - 
+# Jan 2022: - Wrote function for filling gaps
+#           - Applied function to each ASDL source used for filling gaps
+#           - Returns number of gaps detected and filled each time
+#           - Fixed speed unit error, used to replace knots with m/s
+#           - Check the relationship between variables in tofill and forfilling
+#             before filling gaps
+#           - Question: what to do when relationship is bad, check and don't fill
+#             for example depth and heading from ROV_Heading_Depth_Master?
 ################################################################################
 
 
@@ -142,154 +149,166 @@ load(file=file.path(hypack_path, "HypackData_onTransect.RData"))
 summary(ondat)
 
 
+#===============================================================================
+# STEP 3 - USE ASDL TO FILL IN HYPACK DATA GAPS 
 
-
-
-# -- start here
-
-# notes - lots of repetition here
-#       - need to write a function that can fill in gaps for all variables and 
-#         inputs, with df to fill and df for filling as inputs, as well as type
-
-
-
-
-
-# Fill in missing position and depth data if it was missing from a file due to
-# Hypack crash (or failure to start logging!). Check for any periods when
-# Hypack may have crashed. Fill in any such periods with the lat/long and 
-# heading data from the Ship_GPS data source (Hemisphere GPS).
-
-# Find indices with remaining ROV position gaps
-gapstofill <- which(is.na(ondat$Beacon_Longitude) & ondat$BeaconGaps > 60)
-# ) Find matching indices and try to fill gaps with ship's GPS backup
-matchrows1 <- match(ondat$Datetime[gapstofill], Hemisphere_Master$Datetime)
-ondat$Beacon_Longitude[gapstofill] <- Hemisphere_Master$Longitude[matchrows1]
-ondat$Beacon_Latitude[gapstofill] <- Hemisphere_Master$Latitude[matchrows1]
-ondat$BeaconSource[gapstofill] <- Hemisphere_Master$ID[matchrows1]
-# 2) Find matching indices and try to fill gaps with TrackMan manual ROV GPS
-# Will overwrite ships GPS backup if the indices overlap
-matchrows2 <- match(ondat$Datetime[gapstofill], Manual_Track_Master$Datetime)
-for (i in 1:length(gapstofill)){
-  g <- gapstofill[i]
-  m <- matchrows2[i]
-  # Only fill when there is a match (not na)
-  if( !is.na(m)){
-    ondat$Beacon_Longitude[g] <- Manual_Track_Master$Longitude[m]
-    ondat$Beacon_Latitude[g] <- Manual_Track_Master$Latitude[m]
-    ondat$BeaconSource[g] <- Manual_Track_Master$ID[m]
+# Function to fill gaps
+# Arguments:
+# 'tofill' is the dataframe with gaps that need filling
+# 'forfilling' is the dataframe to attempt to fill the gaps with
+# 'sourcefields' are the names of the columns that you want filled
+# 'fillfields' are the names of the columns to fill sourcefields with
+# 'type' differentiates between position and other data types
+fillgaps <- function(tofill, forfilling, type="", sourcefields, fillfields ){
+  # Check if fields are present in the data
+  if( any(!sourcefields %in% names(tofill))  ){
+        stop("'sourcefields' were not found in 'tofill' dataframe", call.=F)
   }
+  if( any(!fillfields %in% names(forfilling)) ){
+    stop("'fillfields' were not found in 'forfilling' dataframe", call.=F)
+  }
+  # Use the first field in sourcefields to find gaps
+  field <- sourcefields[1]
+  # Find indices with remaining ROV position gaps in 'tofill' DF
+  # for position data only fill large gaps, greater than 60 seconds
+  if( type == "pos"){
+    gapstofill <- which(is.na(tofill[[field]]) & tofill$BeaconGaps > 60)
+  } else {
+    gapstofill <- which(is.na(tofill[[field]]))
+  }
+  # Find matching indices in 'forfilling' DF by datetime
+  fillingrows <- match(tofill$Datetime[gapstofill], forfilling$Datetime)
+  # If there are gaps to fill and matches found
+  if( length(gapstofill) > 0 && any(!is.na(fillingrows)) ){
+    # Fill gaps
+    tofill[gapstofill, sourcefields] <- forfilling[fillingrows, fillfields]
+  }
+  # Remaining gaps
+  if( type == "pos"){
+    stillgaps <- which(is.na(tofill[[field]]) & tofill$BeaconGaps > 60)
+  } else {
+    stillgaps <- which(is.na(tofill[[field]]))
+  }
+  # Message
+  message( length(gapstofill), " gaps detected in ", field, "\n",
+           length(stillgaps), " gaps remain after filling with ", 
+           fillfields[1], "\n\n")
+  # Return
+  return(tofill)
 }
 
+#===============#
+#    POSITION   #
+#===============#
+# Check for relationship between tofill and forfilling
+tmp <- merge(ondat, Manual_Track_Master, by="Datetime")
+if(nrow(tmp) > 0) plot(tmp$Beacon_Longitude.x, tmp$Beacon_Longitude.y)
+# Fill gaps in Beacon long and lat with TrackMan manual ROV GPS
+message( "Filling position with TrackMan manual ROV GPS:")
+ondat <- fillgaps(tofill=ondat,
+                  forfilling=Manual_Track_Master,
+                  type = "pos",
+                  sourcefields=c("Beacon_Longitude", "Beacon_Latitude", 
+                                 "BeaconSource"),
+                  fillfields=c("Beacon_Longitude", "Beacon_Latitude", "ID") )
+# Check for relationship between tofill and forfilling
+tmp <- merge(ondat, Hemisphere_Master, by="Datetime")
+if(nrow(tmp) > 0) plot(tmp$Beacon_Longitude, tmp$Longitude)
+# Fill remaining gaps in Beacon long and lat with ship GPS backup (Hemisphere GPS)
+message( "Filling position with ship GPS backup (Hemisphere GPS):")
+ondat <- fillgaps(tofill=ondat,
+                  forfilling=Hemisphere_Master,
+                  type = "pos",
+                  sourcefields=c("Beacon_Longitude", "Beacon_Latitude", 
+                                 "BeaconSource"),
+                  fillfields=c("Longitude", "Latitude", "ID") )
+
+#==============#
+#    HEADING   #
+#==============#
+# Check for relationship between tofill and forfilling
+tmp <- merge(ondat, ROV_Heading_Depth_Master, by="Datetime")
+if(nrow(tmp) > 0) plot(tmp$ROV_heading.x, tmp$ROV_heading.y)
+# Fill gaps in ROV heading with 'ROV_Heading_Depth_MasterLog.csv'
+message( "Filling ROV heading with 'ROV_Heading_Depth_MasterLog.csv':")
+ondat <- fillgaps(tofill=ondat,
+                  forfilling=ROV_Heading_Depth_Master,
+                  sourcefields="ROV_heading",
+                  fillfields="ROV_heading" )
+# Check for relationship between tofill and forfilling
+tmp <- merge(ondat, Ship_Heading_Master, by="Datetime")
+if(nrow(tmp) > 0) plot(tmp$Ship_heading.x, tmp$Ship_heading.y)
+# Fill gaps in ships heading with 'Hemisphere_Heading_MasterLog.csv'
+message( "Filling ship heading with 'Hemisphere_Heading_MasterLog.csv':")
+ondat <- fillgaps(tofill=ondat,
+                  forfilling=Ship_Heading_Master,
+                  sourcefields="Ship_heading",
+                  fillfields="Ship_heading" )
+
+#==============#
+#     DEPTH    #
+#==============#
+# Check for relationship between tofill and forfilling
+tmp <- merge(ondat, RBR_Master, by="Datetime")
+if(nrow(tmp) > 0) plot(tmp$Depth_m.x, tmp$Depth_m.y)
+# Fill gaps in depth with 'ROV_Heading_Depth_MasterLog.csv'
+message( "Filling depth with RBR CTD backup:")
+ondat <- fillgaps(tofill=ondat,
+                  forfilling=RBR_Master,
+                  sourcefields="Depth_m",
+                  fillfields="Depth_m" )
+# Check for relationship between tofill and forfilling
+tmp <- merge(ondat, ROV_Heading_Depth_Master, by="Datetime")
+if(nrow(tmp) > 0) plot(tmp$Depth_m.x, tmp$Depth_m.y)
+# Fill remaining gaps in depth with 'ROV_Heading_Depth_MasterLog.csv'
+message( "Filling depth with 'ROV_Heading_Depth_MasterLog.csv':")
+ondat <- fillgaps(tofill=ondat,
+                  forfilling=ROV_Heading_Depth_Master,
+                  sourcefields="Depth_m",
+                  fillfields="Depth_m" )
+
+#==================#
+#    SLANT RANGE   #
+#==================#
+# Check for relationship between tofill and forfilling
+tmp <- merge(ondat, Slant_Range_Master, by="Datetime")
+if(nrow(tmp) > 0) plot(tmp$Slant_range_m.x, tmp$Slant_range_m.y)
+# Fill gaps in slant range with 'Tritech_SlantRange_MasterLog.csv'
+message( "Filling slant range with Tritech backup:")
+ondat <- fillgaps(tofill=ondat,
+                  forfilling=Slant_Range_Master,
+                  sourcefields="Slant_range_m",
+                  fillfields="Slant_range_m" )
+
+#===============#
+#    ALTITUDE   #
+#===============#
+# Check for relationship between tofill and forfilling
+tmp <- merge(ondat, DVL_Master, by="Datetime")
+if(nrow(tmp) > 0) plot(tmp$Altitude_m.x, tmp$Altitude_m.y)
+# Question why leave out of range values as -9999, instead of NA? 
+# Fill gaps in altitude with 'ROWETECH_DVL_MasterLog.csv'
+message( "Filling altitude with DVL backup:")
+ondat <- fillgaps(tofill=ondat,
+                  forfilling=DVL_Master,
+                  sourcefields="Altitude_m",
+                  fillfields="Altitude_m" )
+
+#==============#
+#     SPEED    #
+#==============#
+# Check for relationship between tofill and forfilling
+tmp <- merge(ondat, DVL_Master, by="Datetime")
+if(nrow(tmp) > 0) plot(tmp$Speed_kts.x, tmp$Speed_kts.y)
+# Fill gaps in speed with 'ROWETECH_DVL_MasterLog.csv'
+message( "Filling speed with DVL backup:")
+ondat <- fillgaps(tofill=ondat,
+                  forfilling=DVL_Master,
+                  sourcefields="Speed_kts",
+                  fillfields="Speed_kts" )
+  
 
 
-#Next, check and see if better position data can be retrieved from the manual 
-# tracking of the main beacon from data output by TrackMan, fill it in if possible. 
-# This code block checks to see if a Manual Tracking Master data frame exists before 
-# trying to execute.
-  
-
-  index <- match(ondat$Datetime[gapstofill], Manual_Tracking_Master$Datetime)
-  swap <- which(!is.na(index))
-  if(length(swap) != 0)
-  {fill$Main_Beacon_Long[temporary1] <- Manual_Tracking_Master$Beacon_Long[swap] 
-  fill$Main_Beacon_Lat[temporary1] <- Manual_Tracking_Master$Beacon_Lat[swap]  
-  fill$Position_Source[temporary1] <- Manual_Tracking_Master$ID[swap]
-  }
-
-  
-#Same process for the Phantom heading, but data could be missing from different 
-  # index locations. Create new index locator variables, specific to heading parameter
-  
-  temporary1 <- which(is.na(fill$Phantom_heading))
-  temporary2 <- fill$date_time[temporary1]
-  Phantom_heading_to_fill <- get("Phantom_Heading_Depth_Master")
-  index <- match(temporary2, Phantom_heading_to_fill$date_time)
-  swap <- which(!is.na(index))
-  if(length(swap) != 0)
-  {fill$Phantom_heading[temporary1] <- Phantom_heading_to_fill$Phantom_heading[index] #Heading from Phantom onboard compass.
-  fill$Phantom_heading <- as.numeric(fill$Phantom_heading) #Set as numeric explicitly, just to be safe.
-  }
-  
-#Same process for the ship's heading
-  
-  temporary1 <- which(is.na(fill$Ship_heading))
-  temporary2 <- fill$date_time[temporary1]
-  Ship_heading_to_fill <- get("Ship_Heading_Master")
-  index <- match(temporary2, Ship_heading_to_fill$date_time)
-  swap <- which(!is.na(index))
-  if(length(swap) != 0)
-  {fill$Ship_heading[temporary1] <- Ship_heading_to_fill$Ship_heading[index] #Heading from Hemisphere_GPS_Master Log
-  fill$Ship_heading <- as.numeric(fill$Ship_heading) #Set as numeric explicitly, just to be safe.
-  }
-
-#Same process from the Phantom's onboard depth sensor
-  
-  temporary1 <- which(is.na(fill$Depth_m))
-  temporary2 <- fill$date_time[temporary1]
-  Depth_to_fill <- get("Phantom_Heading_Depth_Master")
-  index <- match(temporary2, Depth_to_fill$date_time)
-  swap <- which(!is.na(index))
-  if(length(swap) != 0)
-  {fill$Depth_m[temporary1] <- Depth_to_fill$Depth_m[index] #Depth from BOOTS_Master Log
-  fill$Depth_m <- as.numeric(fill$Depth_m) #Set as numeric explicitly, just to be safe.
-  }
-
-#Now check to see if better depth data is available from the RBR CTD depth data source, fill it in if possible. Can use the same temporary variable values
-#of temporary1 and temporary2 as in the previous section, since it's all depth data.
-  
-  RBR_to_fill <- get("RBR_Master")
-  index <- match(temporary2, RBR_to_fill$date_time)
-  swap <- which(!is.na(index))
-  if(length(swap) != 0)
-  {fill$Depth_m[temporary1] <- RBR_to_fill$Depth_m[index] 
-  fill$Depth_m <- as.numeric(fill$Depth_m) #Set as numeric explicitly, just to be safe.
-  fill$Depth_Source[temporary1] <- RBR_to_fill$ID[swap]
-  }
-  
-#Check to see if additional data records for MiniZeus Slant Range can be retrieved from the ASDL logs, fill in if possible. This will attempt to
-#replace any remaining NA values in the data, but will leave out of range readings (-9999) in place.
-  
-  temporary1 <- which(is.na(fill$Slant_Range_m))
-  temporary2 <- fill$date_time[temporary1]
-  Slant_to_fill <- get("Slant_Range_Master")
-  index <- match(temporary2, Slant_to_fill$date_time)
-  swap <- which(!is.na(index))
-  if(length(swap) != 0)
-  {fill$Slant_Range_m[temporary1] <- Slant_to_fill$slant_range_m[index] 
-  fill$Slant_Range_m <- as.numeric(fill$Slant_Range_m) #Set as numeric explicitly, just to be safe.
-  }
-  
-#Check to see if additional data records for DVL Altitude can be retrieved from the ASDL logs, fill in if possible. This will replace attempt to
-#replace any remaining NA values in the data, but will leave out of range readings (-9999) in place.
-  
-  temporary1 <- which(is.na(fill$Altitude_m))
-  temporary2 <- fill$date_time[temporary1]
-  Alt_to_fill <- get("DVL_Master")
-  index <- match(temporary2, Alt_to_fill$date_time)
-  swap <- which(!is.na(index))
-  if(length(swap) != 0)
-  {fill$Altitude_m[temporary1] <- Alt_to_fill$Altitude_m[index] 
-  fill$Altitude_m <- as.numeric(fill$Altitude_m) #Set as numeric explicitly, just to be safe.
-  }
-  
-#Replace all Velocity measurements from the DVL with the values from DVL_Master$Bottom_Y_Velocity_ms; this may be redundant in some cases, but should
-#replace some potentially incorrect entries.
-  
-  fill$Speed_kts[temporary1] <- Alt_to_fill$Bottom_Y_Velocity_ms[index] 
-  
-#Make sure the Long and Lat values area numeric.
-  
-  fill$Main_Beacon_Long <- as.numeric(fill$Main_Beacon_Long)
-  fill$Main_Beacon_Lat <- as.numeric(fill$Main_Beacon_Lat)
-  fill$Secondary_Beacon_Lat <- as.numeric(fill$Secondary_Beacon_Lat)
-  fill$Secondary_Beacon_Long <- as.numeric(fill$Secondary_Beacon_Long)
-  fill$Depth_m <- as.numeric(fill$Depth_m)
-  
-#Re-assign the filled in data to to the dive file.
-  
-  assign(i, fill) #Re-assign the filled in data to the dive file
-  rm(list = c("Tracking_to_fill","RBR_to_fill","GPS_to_fill","fill"))
 
   
 

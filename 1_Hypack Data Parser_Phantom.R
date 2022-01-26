@@ -497,6 +497,8 @@ names(speed_data)[1] <- "Speed_kts"
 speed_data$Speed_kts[ speed_data$Speed_kts < 0 ] <- NA
 # Remove duplicated
 speed <- speed_data[!duplicated(speed_data$Datetime),]
+# Check for high speeds
+hist(speed$Speed_kts, breaks=30)
 # Summary
 print(summary(speed))
 
