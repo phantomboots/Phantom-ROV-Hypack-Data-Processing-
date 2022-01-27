@@ -56,11 +56,8 @@
 #           - Fixed error in '2b_Manual Beacon Position Calculator.R' code that 
 #             used ship position instead of calculated position
 #           - Calculates speed in knots from DVL velocities
+#           - Switched order of heading and depth in "ROV" files, possible error
 ################################################################################
-
-
-# - something wrong with ROV_Heading_Depth_MasterLog.csv data, possibly
-#   heading and depth switched? Not using the right columns?
 
 
 #===============================================================================
@@ -241,7 +238,12 @@ if( length(ROV_files) > 0 ){
   # Bind into dataframe
   ROV_all <- do.call("rbind", rovlist)
   # Rename
-  names(ROV_all) <- c("Datetime","Depth_m","ROV_heading")
+  names(ROV_all) <- c("Datetime","ROV_heading","Depth_m")
+  # Set depths below zero to zero
+  ROV_all$Depth_m[ROV_all$Depth_m < 0] <- 0
+  # Convert depth from feet to meters
+  # Question: This was not done in previous version, should depth be in meters? 
+  ROV_all$Depth_m <- ROV_all$Depth_m * 3.28084
   # Summary
   print(summary(ROV_all))
   # Write

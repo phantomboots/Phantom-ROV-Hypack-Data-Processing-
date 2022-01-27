@@ -54,8 +54,8 @@
 #           - Fixed speed unit error, used to replace knots with m/s
 #           - Check the relationship between variables in tofill and forfilling
 #             before filling gaps
-#           - Question: what to do when relationship is bad, check and don't fill
-#             for example depth and heading from ROV_Heading_Depth_Master?
+#           - Question: what to do when relationship is bad, don't fill?
+#             eg. speed_kts
 ################################################################################
 
 
@@ -307,10 +307,20 @@ ondat <- fillgaps(tofill=ondat,
                   sourcefields="Speed_kts",
                   fillfields="Speed_kts" )
   
-
+# Save data after ASDL was used to fill gaps
+save(ondat, file=file.path(hypack_path, "HypackData_wASDL_onTransect.RData"))
 
 
   
+
+#===============================================================================
+# STEP 4 - INTERPOLATE LAT AND LONG TO FILL GAPS
+
+# -- start here
+
+
+
+
 
 
 ############STEP 4 - COERCE THE LAT/LONGS TO A ZOO OBJECT AND INTERPOLATE MISSING POSITIONS##########
