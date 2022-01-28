@@ -66,7 +66,8 @@
 #          - Using terra instead of rgdal, accepts NA values
 ################################################################################
 
-
+# to do - add depth source column
+#       - rename position source column
 
 #===============================================================================
 # Packages and session options

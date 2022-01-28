@@ -64,8 +64,7 @@
 # Packages and session options
 
 # Check if necessary packages are present, install as required.
-packages <- c("lubridate","readxl","readr","dplyr","stringr",
-              "rgdal","zoo","geosphere")
+packages <- c("lubridate","dplyr","stringr","imputeTS","geosphere")
 new_packages <- packages[!(packages %in% installed.packages()[,"Package"])]
 if(length(new_packages)) install.packages(new_packages)
 
@@ -124,8 +123,6 @@ loess_span = 0.05
 # Read all Master Log files
 Slant_Range_Master <- read.csv(file.path(ASDL_path,"Tritech_SlantRange_MasterLog.csv"))
 Slant_Range_Master$Datetime <- ymd_hms(Slant_Range_Master$Datetime)
-MiniZeus_ZFA_Master <- read.csv(file.path(ASDL_path,"MiniZeus_ZFA_MasterLog.csv"))
-MiniZeus_ZFA_Master$Datetime <- ymd_hms(MiniZeus_ZFA_Master$Datetime)
 Manual_Track_Master <- read.csv(file.path(ASDL_path,"Manual_Beacon_Tracking_MasterLog.csv"))
 Manual_Track_Master$Datetime <- ymd_hms(Manual_Track_Master$Datetime)
 Manual_Track_Master$ID <- "Manual tracking backup"
@@ -138,11 +135,13 @@ DVL_Master <- read.csv(file.path(ASDL_path,"ROWETECH_DVL_MasterLog.csv"))
 DVL_Master$Datetime <- ymd_hms(DVL_Master$Datetime)
 ROV_Heading_Depth_Master <- read.csv(file.path(ASDL_path,"ROV_Heading_Depth_MasterLog.csv"))
 ROV_Heading_Depth_Master$Datetime <- ymd_hms(ROV_Heading_Depth_Master$Datetime)
-ROV_MiniZeus_IMUS_Master <- read.csv(file.path(ASDL_path,"Zeus_ROV_IMU_MasterLog.csv"))
-ROV_MiniZeus_IMUS_Master$Datetime <- ymd_hms(ROV_MiniZeus_IMUS_Master$Datetime)
 RBR_Master <- read.csv(file.path(ASDL_path,"RBR_CTD_MasterLog.csv"))
 RBR_Master$Datetime <- ymd_hms(RBR_Master$Datetime)
 RBR_Master$ID <- "RBR CTD backup"
+MiniZeus_ZFA_Master <- read.csv(file.path(ASDL_path,"MiniZeus_ZFA_MasterLog.csv"))
+MiniZeus_ZFA_Master$Datetime <- ymd_hms(MiniZeus_ZFA_Master$Datetime)
+ROV_MiniZeus_IMUS_Master <- read.csv(file.path(ASDL_path,"Zeus_ROV_IMU_MasterLog.csv"))
+ROV_MiniZeus_IMUS_Master$Datetime <- ymd_hms(ROV_MiniZeus_IMUS_Master$Datetime)
 
 # Read in transect data processed at a 1Hz from Hypack (named: ondat)
 load(file=file.path(hypack_path, "HypackData_onTransect.RData"))
@@ -307,32 +306,40 @@ ondat <- fillgaps(tofill=ondat,
                   sourcefields="Speed_kts",
                   fillfields="Speed_kts" )
   
-# Save data after ASDL was used to fill gaps
+
+
+#===============================================================================
+# STEP 4 - ADD ASDL NOT IN HYPACK DATA 
+
+# Merge MiniZeus fields
+ondat <- left_join(ondat, MiniZeus_ZFA_Master, by = "Datetime")
+ondat <- left_join(ondat, ROV_MiniZeus_IMUS_Master, by = "Datetime")
+
+
+# Save data after ASDL was used to fill gaps and extra fields added
 save(ondat, file=file.path(hypack_path, "HypackData_wASDL_onTransect.RData"))
 
 
-  
 
 #===============================================================================
-# STEP 4 - INTERPOLATE LAT AND LONG TO FILL GAPS
+# STEP 5 - INTERPOLATE TO FILL GAPS
 
-# -- start here
-
-
-
+# --  function to do interpolation then apply to all variables
+# -- use na_interpolation, add Beacon Source = "interpolation"
 
 
 
-############STEP 4 - COERCE THE LAT/LONGS TO A ZOO OBJECT AND INTERPOLATE MISSING POSITIONS##########
 
-#Zoo objects are 'totally ordered observations', and each observation must be unique. Coercing the Lat/Long for the beacon data to a Zoo 
-#object allows the use zoo::na.approx function, to interpolate missing records in the data series.
-#However, don't want the data stored as a matrix at the end of this process, so it is rebinded back into a data frame at the end of this loop.
+# Zoo objects are 'totally ordered observations', and each observation must be unique. 
+# Coercing the Lat/Long for the beacon data to a Zoo object allows the use 
+# zoo::na.approx function, to interpolate missing records in the data series. However, 
+# don't want the data stored as a matrix at the end of this process, so it is 
+# rebinded back into a data frame at the end of this loop.
 
 for(i in unique(Dives))
 {
   name <- get(i)
-  Long <- zoo(name$Main_Beacon_Long, order.by = name$date_time)
+  Long <- zoo(name$Beacon_Longitude, order.by = name$date_time)
   Lat <- zoo(name$Main_Beacon_Lat, order.by = name$date_time)
   Long_intepolated <- na.approx(Long, rule = 2) #Rule 2 means interpolate both forwards and backwards in the time series.
   Long_intepolated <- as.matrix(Long_intepolated) #Convert back to a base object class (a matrix) to extract the components of the zoo object.
@@ -360,26 +367,6 @@ for(i in unique(Dives))
   assign(i, cbind(name, Ship_Long_interp, Ship_Lat_interp))
 }
 
-#############################STEP 5 - ADD IN ALL OTHER DATA SOURCES#####################################################
-
-#Loop through all the dives that have been loaded in, and merge all the various data sets into a single data frame for each dive.
-#use left_join() to add additional columns onto the data frame, matching them by timestamp.
-
-for(i in unique(Dives))
-{
-  name <- get(i)
-  name <- left_join(name, MiniZeus_ZFA_Master, by = "date_time")
-  name <- left_join(name, ROV_MiniZeus_IMUS_Master, by = "date_time")
-  name <- name[,c(1:8,20:23,9:19,24:30)]
-  names(name) <- c("date_time","Transect_name","Main_Beacon_Long_raw","Main_Beacon_Lat_raw","Secondary_Beacon_Long_Raw","Secondary_Beacon_Lat_Raw",
-                    "Ship_Long_raw","Ship_Lat_raw","Main_Beacon_Long_interp","Main_Beacon_Lat_interp","Ship_Long_interp","Ship_Lat_interp","Depth_m",
-               "Phantom_heading","Ship_heading","Speed_kts","Altitude_m","Slant_Range_m","Rogue_pitch","Rogue_roll","Best_Depth_Source","Best_Position_Source","Gaps",
-               "MiniZeus_zoom_percent","MiniZeus_focus_percent","MiniZeus_aperture_percent","MiniZeus_pitch","MiniZeus_roll","ROV_pitch","ROV_roll")
-  name$Best_Position_Source[is.na(name$Best_Position_Source)] <- "Linear Interpolation"  #Flag the instances where linear interpolation was performed
-  assign(i, name)
-}
-
-############STEP 6 - COERCE HEADING DATA TO A ZOO OBJECT AND INTERPOLATE MISSING DATA##########
 
 # Coerce the Ship's Heading data to a zoo object, and interpolate missing records. The same process as in the previous section.
 
@@ -394,7 +381,6 @@ for(i in unique(Dives))
 }
 
 
-############STEP 7 - COERCE THE DEPTH DATA TO A ZOO OBJECT AND INTERPOLATE MISSING DATA##############
 
 # Coerce the depth data to a zoo object, and interpolate missing records. The same process as in the previous section.
 
@@ -408,7 +394,6 @@ for(i in unique(Dives))
   assign(i, mutate(name, Depth_m = Depth_interpolated)) #Replace the column with missing values with the one that were just interpolated
 }
 
-############STEP 8 - COERCE THE SLANT RANGE AND ALTITUDE DATA TO ZOO OBJECTS AND INTERPOLATE MISSING DATA##############
 
 # Coerce the MiniZeus slant range and ROV altitude data to a zoo object, and interpolate missing records. This differs from the NA interpolation done above,
 # since sequential NA values (i.e. more than one in a row) won't be filled. This is done by setting maxgap = 1.
@@ -452,7 +437,10 @@ for(i in unique(Dives))
 
 }
 
-###################################STEP 9 - APPLY OFFSETS TO POSITIONS DATA SOURCES############################
+
+
+#===============================================================================
+# STEP 6 - APPLY OFFSETS TO POSITIONS DATA
 
 #Calculate angles created by the abeam and along ship centerline offset values, to be used in calculation of offset from center of ship
 #for GPS antenna. For trigonometry purposes, abeam = opposite and along = adjacent.
@@ -506,7 +494,11 @@ for(i in unique(Dives))
   assign(i, name)
 }
 
-################################################STEP 10 - REMOVE BEACON DATA OUTLIERS#################################
+
+
+#===============================================================================
+# STEP 7 - REMOVE BEACON OUTLIERS
+
 
 #Calculate cross track distance between GPS track of the Ship and beacon position. Do this by creating a point distance matrix between
 #each interpolated beacon position, and the Ship_GPS point for that same second
@@ -553,7 +545,14 @@ for(i in unique(Dives))
   assign(i, name)
 }
 
-#############################################STEP 11 - APPLY LOESS AND RUNNING MEDIAN SMOOTHING TO ROV POSITION DATA #############################################
+
+
+
+
+#===============================================================================
+# STEP 8 - APPLY LOESS AND RUNNING MEDIAN SMOOTHING TO ROV POSITION DATA 
+
+
 
 #Smooth the interpolated beacon position with the Loess smoother, with an alpha value of 0.05
 
@@ -581,7 +580,12 @@ for(i in unique(Dives))
   assign(i, name)
 }
 
-###################################STEP 12 - WRITE FINAL PROCESSED DATA TO FILE####################################################
+
+
+
+#===============================================================================
+# STEP 9 - WRITE FINAL PROCESSED DATA TO FILE
+
 
 #Create final processed files, and write to .CSV.
 

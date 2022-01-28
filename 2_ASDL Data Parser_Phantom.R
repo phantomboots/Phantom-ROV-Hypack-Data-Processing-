@@ -279,29 +279,6 @@ if( length(Tritech_files) > 0 ){
 }
 
 #======================#
-#      MiniZeus ZFA    #
-#======================#
-
-# List files
-ZFA_files <- list.files(pattern = "^MiniZeus", path = ASDL_dir, full.names = T)
-# Run if files exist
-if( length(ZFA_files) > 0 ){
-  # Message
-  message("\nCreating 'MiniZeus_ZFA_MasterLog.csv'", "\n")
-  # Apply function in parallel
-  zfalist <- future_lapply(ZFA_files, FUN=readASDL, type="minizeus")
-  # Bind into data frame
-  ZFA_all <- do.call("rbind", zfalist)
-  # Rename
-  names(ZFA_all) <- c("Datetime","zoom_percent","focus_percent","aperture_percent")
-  # Summary
-  print(summary(ZFA_all))
-  # Write
-  write.csv(ZFA_all, file.path(save_dir,"MiniZeus_ZFA_MasterLog.csv"),
-            quote = F, row.names = F)
-}
-
-#======================#
 #        RBR CTD       #
 #======================#
 
@@ -477,6 +454,30 @@ if( length(sound_files) > 0 ){
             quote = F, row.names = F)
 }
 
+#======================#
+#      MiniZeus ZFA    #
+#======================#
+
+# List files
+ZFA_files <- list.files(pattern = "^MiniZeus", path = ASDL_dir, full.names = T)
+# Run if files exist
+if( length(ZFA_files) > 0 ){
+  # Message
+  message("\nCreating 'MiniZeus_ZFA_MasterLog.csv'", "\n")
+  # Apply function in parallel
+  zfalist <- future_lapply(ZFA_files, FUN=readASDL, type="minizeus")
+  # Bind into data frame
+  ZFA_all <- do.call("rbind", zfalist)
+  # Rename
+  names(ZFA_all) <- c("Datetime","MiniZeus_zoom_percent",
+                      "MiniZeus_focus_percent","MiniZeus_aperture_percent")
+  # Summary
+  print(summary(ZFA_all))
+  # Write
+  write.csv(ZFA_all, file.path(save_dir,"MiniZeus_ZFA_MasterLog.csv"),
+            quote = F, row.names = F)
+}
+
 #===================#
 #    MINIZEUS IMU   #
 #===================#
@@ -493,15 +494,17 @@ if( length(IMU_files) > 0 ){
   # Bind into data frame
   IMU_all <- do.call("rbind", imulist)
   # Rename
-  names(IMU_all) <- c("Datetime","Zeus_Pitch","Zeus_Roll","ROV_Pitch","ROV_Roll")
+  names(IMU_all) <- c("Datetime","MiniZeus_pitch","MiniZeus_roll",
+                      "ROV_pitch","ROV_roll")
   # Apply the offsets to the IMU pitch and roll values
-  IMU_all$ROV_Pitch <- IMU_all$ROV_Pitch + rov_pitch_offset
-  IMU_all$ROV_Roll <- IMU_all$ROV_Roll + rov_roll_offset
-  IMU_all$Zeus_Pitch <- IMU_all$Zeus_Pitch + zeus_pitch_offset
-  IMU_all$Zeus_Roll <- IMU_all$Zeus_Roll + zeus_roll_offset
-  # Calculate difference
-  IMU_all$MiniZeus_Pitch_Minus_ROV_Pitch <- IMU_all$Zeus_Pitch - IMU_all$ROV_Pitch
-  IMU_all$MiniZeus_Roll_Minus_ROV_Roll <- IMU_all$Zeus_Roll - IMU_all$ROV_Roll
+  IMU_all$MiniZeus_pitch <- IMU_all$MiniZeus_pitch + zeus_pitch_offset 
+  IMU_all$MiniZeus_roll <- IMU_all$MiniZeus_roll + zeus_roll_offset 
+  IMU_all$ROV_pitch <- IMU_all$ROV_pitch + rov_pitch_offset
+  IMU_all$ROV_roll <- IMU_all$ROV_roll + rov_roll_offset
+  # Question: Why calculate this? Doesn't look like it is used later
+  # # Calculate difference
+  # IMU_all$MiniZeus_Pitch_Minus_ROV_Pitch <- IMU_all$Zeus_Pitch - IMU_all$ROV_Pitch
+  # IMU_all$MiniZeus_Roll_Minus_ROV_Roll <- IMU_all$Zeus_Roll - IMU_all$ROV_Roll
   # Summary
   print(summary(IMU_all))
   # Write
