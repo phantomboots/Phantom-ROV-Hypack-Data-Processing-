@@ -171,7 +171,7 @@ fillgaps <- function(tofill, forfilling, type="", sourcefields, fillfields ){
   # Find indices with remaining ROV position gaps in 'tofill' DF
   # for position data only fill large gaps, greater than 60 seconds
   if( type == "pos"){
-    gapstofill <- which(is.na(tofill[[field]]) & tofill$BeaconGaps > 60)
+    gapstofill <- which(is.na(tofill[[field]]) & tofill$Beacon_Gaps > 60)
   } else {
     gapstofill <- which(is.na(tofill[[field]]))
   }
@@ -184,7 +184,7 @@ fillgaps <- function(tofill, forfilling, type="", sourcefields, fillfields ){
   }
   # Remaining gaps
   if( type == "pos"){
-    stillgaps <- which(is.na(tofill[[field]]) & tofill$BeaconGaps > 60)
+    stillgaps <- which(is.na(tofill[[field]]) & tofill$Beacon_Gaps > 60)
   } else {
     stillgaps <- which(is.na(tofill[[field]]))
   }
@@ -208,7 +208,7 @@ ondat <- fillgaps(tofill=ondat,
                   forfilling=Manual_Track_Master,
                   type = "pos",
                   sourcefields=c("Beacon_Longitude", "Beacon_Latitude", 
-                                 "BeaconSource"),
+                                 "Beacon_Source"),
                   fillfields=c("Beacon_Longitude", "Beacon_Latitude", "ID") )
 # Check for relationship between tofill and forfilling
 tmp <- merge(ondat, Hemisphere_Master, by="Datetime")
@@ -219,7 +219,7 @@ ondat <- fillgaps(tofill=ondat,
                   forfilling=Hemisphere_Master,
                   type = "pos",
                   sourcefields=c("Beacon_Longitude", "Beacon_Latitude", 
-                                 "BeaconSource"),
+                                 "Beacon_Source"),
                   fillfields=c("Longitude", "Latitude", "ID") )
 
 #==============#

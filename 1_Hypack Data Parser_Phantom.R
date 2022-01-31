@@ -66,8 +66,6 @@
 #          - Using terra instead of rgdal, accepts NA values
 ################################################################################
 
-# to do - add depth source column
-#       - rename position source column
 
 #===============================================================================
 # Packages and session options
@@ -296,7 +294,12 @@ plot(depths$Depth_m, depths$Depth2)
 abline(a=0, b=1, col="red")
 # Use depth_secondary to fill in gaps in depth_pref where possible
 depths$Depth <- ifelse( is.na(depths$Depth_m), depths$Depth2, depths$Depth_m )
-depths <- depths[c("Datetime","Depth_m")]
+# Depth source
+depths$Depth_Source <- "Primary"
+depths$Depth_Source[depths$Depth_m == depths$Depth2] <- "Secondary"
+table(depths$Depth_Source)
+# Subset
+depths <- depths[c("Datetime","Depth_m", "Depth_Source")]
 # Summary
 print(summary(depths))
 
@@ -328,7 +331,7 @@ names(position_data2)[1:2] <- c("Beacon_Easting2","Beacon_Northing2")
 # Sort primary by Datetime
 position_data <- position_data[order(position_data$Datetime),]
 # Calculate gap time in seconds between primary position records 
-position_data$BeaconGaps <- as.numeric(
+position_data$Beacon_Gaps <- as.numeric(
   c( difftime(tail(position_data$Datetime, -1), 
               head(position_data$Datetime, -1)), 0 ))
 
@@ -352,40 +355,40 @@ abline(a=0, b=1, col="red")
 if( is.na(positions$Beacon_Easting[1]) ){
   # First Beacon_Easting position
   f <- min(which(!is.na(positions$Beacon_Easting)))
-  positions$BeaconGaps[1] <- as.numeric(difftime(positions$Datetime[f], 
+  positions$Beacon_Gaps[1] <- as.numeric(difftime(positions$Datetime[f], 
                                                  positions$Datetime[1]))
 }
 # Expand gap values
-positions$BeaconGaps <- na.locf(positions$BeaconGaps, fromLast = FALSE)
+positions$Beacon_Gaps <- na.locf(positions$Beacon_Gaps, fromLast = FALSE)
 # Warn: filling in gap values with non-primary data sources
-if( any(positions$BeaconGaps > 60 & is.na(positions$Beacon_Northing)) ){
+if( any(positions$Beacon_Gaps > 60 & is.na(positions$Beacon_Northing)) ){
   warning("Gaps greater than 60 seconds exist in the primary position sensor.\n", 
           "Attempting to fill using secondary source then ship position.")
 }
 # Replace primary with secondary when primary is NA for more than 60 seconds
-positions$Beacon_Northing <-ifelse( positions$BeaconGaps > 60 & 
+positions$Beacon_Northing <-ifelse( positions$Beacon_Gaps > 60 & 
                                       is.na(positions$Beacon_Northing), 
                                      positions$Beacon_Northing2, 
                                      positions$Beacon_Northing )
-positions$Beacon_Easting <- ifelse( positions$BeaconGaps > 60 & 
+positions$Beacon_Easting <- ifelse( positions$Beacon_Gaps > 60 & 
                                       is.na(positions$Beacon_Easting), 
                                     positions$Beacon_Easting2, 
                                     positions$Beacon_Easting )
 # Then, replace remaining primary gaps over 60 with ship
-positions$Beacon_Northing <-ifelse( positions$BeaconGaps > 60 & 
+positions$Beacon_Northing <-ifelse( positions$Beacon_Gaps > 60 & 
                                       is.na(positions$Beacon_Northing), 
                                     positions$Ship_Northing, 
                                     positions$Beacon_Northing )
-positions$Beacon_Easting <- ifelse( positions$BeaconGaps > 60 & 
+positions$Beacon_Easting <- ifelse( positions$Beacon_Gaps > 60 & 
                                       is.na(positions$Beacon_Easting), 
                                     positions$Ship_Easting, 
                                     positions$Beacon_Easting )
 # Add source field
-positions$BeaconSource <- "Primary"
-positions$BeaconSource[is.na(positions$Beacon_Easting)] <- NA
-positions$BeaconSource[positions$Beacon_Easting == 
+positions$Beacon_Source <- "Primary"
+positions$Beacon_Source[is.na(positions$Beacon_Easting)] <- NA
+positions$Beacon_Source[positions$Beacon_Easting == 
                          positions$Beacon_Easting2] <- "Secondary"
-positions$BeaconSource[positions$Beacon_Easting == 
+positions$Beacon_Source[positions$Beacon_Easting == 
                          positions$Ship_Easting] <- "Ship"
 
 # Convert UTM to lat/lon
@@ -416,7 +419,7 @@ for (z in unique(positions$Zone) ){
 # Replace NaN with NA
 positions[is.na(positions)] <- NA
 # Subset
-pos <- positions[c("Datetime","Zone", "BeaconSource", "BeaconGaps",
+pos <- positions[c("Datetime","Zone", "Beacon_Source", "Beacon_Gaps",
                    "Beacon_Longitude","Beacon_Latitude", 
                    "Ship_Longitude","Ship_Latitude")]
 # Summary
