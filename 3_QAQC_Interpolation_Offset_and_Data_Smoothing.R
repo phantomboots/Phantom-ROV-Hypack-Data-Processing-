@@ -56,6 +56,8 @@
 #             before filling gaps
 #           - Question: what to do when relationship is bad, don't fill?
 #             eg. speed_kts
+#           - attempted to make code more explicit, removed use of column order
+#
 ################################################################################
 
 
@@ -315,6 +317,8 @@ ondat <- fillgaps(tofill=ondat,
 ondat <- left_join(ondat, MiniZeus_ZFA_Master, by = "Datetime")
 ondat <- left_join(ondat, ROV_MiniZeus_IMUS_Master, by = "Datetime")
 
+# Summary
+summary(ondat)
 
 # Save data after ASDL was used to fill gaps and extra fields added
 save(ondat, file=file.path(hypack_path, "HypackData_wASDL_onTransect.RData"))
@@ -327,115 +331,60 @@ save(ondat, file=file.path(hypack_path, "HypackData_wASDL_onTransect.RData"))
 # --  function to do interpolation then apply to all variables
 # -- use na_interpolation, add Beacon Source = "interpolation"
 
-
-
-
-# Zoo objects are 'totally ordered observations', and each observation must be unique. 
-# Coercing the Lat/Long for the beacon data to a Zoo object allows the use 
-# zoo::na.approx function, to interpolate missing records in the data series. However, 
-# don't want the data stored as a matrix at the end of this process, so it is 
-# rebinded back into a data frame at the end of this loop.
-
-for(i in unique(Dives))
-{
-  name <- get(i)
-  Long <- zoo(name$Beacon_Longitude, order.by = name$date_time)
-  Lat <- zoo(name$Main_Beacon_Lat, order.by = name$date_time)
-  Long_intepolated <- na.approx(Long, rule = 2) #Rule 2 means interpolate both forwards and backwards in the time series.
-  Long_intepolated <- as.matrix(Long_intepolated) #Convert back to a base object class (a matrix) to extract the components of the zoo object.
-  Main_Beacon_Long_interp <- Long_intepolated[1:length(Long_intepolated)]
-  Lat_intepolated <- na.approx(Lat, rule = 2) #Rule 2 means interpolate both forwards and backwards in the time series.
-  Lat_intepolated <- as.matrix(Lat_intepolated) #Convert back to a base object class (a matrix) to extract the components of the zoo object.
-  Main_Beacon_Lat_interp <- Lat_intepolated[1:length(Lat_intepolated)]
-  assign(i, cbind(name, Main_Beacon_Long_interp, Main_Beacon_Lat_interp))
+# Load ondat if the first part was run in a previous session
+if (!exists("ondat")){
+  load(file=file.path(hypack_path, "HypackData_wASDL_onTransect.RData"))
 }
 
-#Coerce the Lat/Longs for the Ship's GPS position to a Zoo object and interpolate, in the same manner as above. Again, re-bind it to a data frame
-#at the end of the loop.
-
-for(i in unique(Dives))
-{
-  name <- get(i)
-  Long <- zoo(name$Ship_Long, order.by = name$date_time)
-  Lat <- zoo(name$Ship_Lat, order.by = name$date_time)
-  Long_intepolated <- na.approx(Long, rule = 2) #Rule 2 means interpolate both forwards and backwards in the time series.
-  Long_intepolated <- as.matrix(Long_intepolated) #Convert back to a base object class (a matrix) to extract the components of the zoo object.
-  Ship_Long_interp <- Long_intepolated[1:length(Long_intepolated)]
-  Lat_intepolated <- na.approx(Lat, rule = 2) #Rule 2 means interpolate both forwards and backwards in the time series.
-  Lat_intepolated <- as.matrix(Lat_intepolated) #Convert back to a base object class (a matrix) to extract the components of the zoo object.
-  Ship_Lat_interp <- Lat_intepolated[1:length(Lat_intepolated)]
-  assign(i, cbind(name, Ship_Long_interp, Ship_Lat_interp))
-}
-
-
-# Coerce the Ship's Heading data to a zoo object, and interpolate missing records. The same process as in the previous section.
-
-for(i in unique(Dives))
-{
-  name <- get(i)
-  Heading <- zoo(name$Ship_heading, order.by = name$date_time)
-  Heading_intepolated <- na.approx(Heading, rule = 2) #Rule 2 means interpolate both forwards and backwards in the time series.
-  Heading_intepolated <- as.matrix(Heading_intepolated) #Convert back to a base object class (a matrix) to extract the components of the zoo object.
-  Heading_intepolated <- Heading_intepolated[1:length(Heading_intepolated)]
-  assign(i, mutate(name, Ship_heading = Heading_intepolated)) #Replace the column with missing values with the one that were just interpolated
-}
-
-
-
-# Coerce the depth data to a zoo object, and interpolate missing records. The same process as in the previous section.
-
-for(i in unique(Dives))
-{
-  name <- get(i)
-  Depth <- zoo(name$Depth_m, order.by = name$date_time)
-  Depth_interpolated <- na.approx(Depth, rule = 2) #Rule 2 means interpolate both forwards and backwards in the time series.
-  Depth_interpolated <- as.matrix(Depth_interpolated) #Convert back to a base object class (a matrix) to extract the components of the zoo object.
-  Depth_interpolated <- Depth_interpolated[1:length(Depth_interpolated)]
-  assign(i, mutate(name, Depth_m = Depth_interpolated)) #Replace the column with missing values with the one that were just interpolated
-}
-
-
-# Coerce the MiniZeus slant range and ROV altitude data to a zoo object, and interpolate missing records. This differs from the NA interpolation done above,
-# since sequential NA values (i.e. more than one in a row) won't be filled. This is done by setting maxgap = 1.
-# This process will generate a zoo object with a different length than the dive data frame that it is derived from, so a left_join is performed and the resulting
-# vector of the correct lenght is extracted to be re-inserted back into the dive data frame via dplyr::mutate().
-
-for(i in unique(Dives))
-{
-  name <- get(i)
-  if(any(!is.na(name$Altitude_m)) == F) #Check if there is any altitude data, if there is none (i.e, all entries are NA) skip trying to interpolate and move to the next file.
-  {
-    break
+# Interpolate function
+# Only interpolates if there are more than 2 non-NA values
+interpGaps <- function( dat, variable, suffix="interp" ){
+  # Name of interpolated field
+  fname <- paste(variable, suffix, sep="_")
+  # Check total not missing values
+  total_not_missing <- sum(!is.na(dat[[variable]]))
+  # check there is sufficient data for na_interpolation 
+  if(total_not_missing >= 2) {
+    # Interpolate
+    dat[[fname]] <- imputeTS::na_interpolation(dat[[variable]], option = "linear") 
+  }else {
+    # Don't interpolate if there aren't enough noNA values
+    dat[[fname]] <- dat[[variable]]
   }
-  Altitude <- zoo(name$Altitude_m, order.by = name$date_time)
-  Altitude_interpolated <- na.approx(Altitude, rule = 2, maxgap = 1) #Rule 2 means interpolate both forwards and backwards in the time series. Maxgap = 1 means that back to back NA values won't be replaced.
-  Altitude_interpolated <- as.matrix(Altitude_interpolated) #Convert back to a base object class (a matrix) to extract the components of the zoo object.
-  Altitude_names <- rownames(Altitude_interpolated) #Extract the rownames from the matrix (i.e. the timestamps)
-  Altitude_interpolated <- Altitude_interpolated[1:length(Altitude_interpolated)] #Extract the data from the matrix
-  Altitude_interpolated <- data.frame(date_time = ymd_hms(Altitude_names), Altitude_m = Altitude_interpolated) #Re-assemble the data into a data frame. Set the date_time to a POSIXct object
-  Altitude_interpolated <- left_join(name, Altitude_interpolated, by = "date_time") #Join the interpolated date to the dive data frame. 
-  Altitude_interpolated$Altitude_m.y[Altitude_interpolated$Altitude_m.y < 0] <- -9999  #Interpolation may have resulted in some negative values that are not -9999, reset all negative values to -9999
-  assign(i, mutate(name, Altitude_m = Altitude_interpolated$Altitude_m.y)) #Replace the column with missing values with the one that were just interpolated
+  # Return
+  return(dat)
 }
 
-for(i in unique(Dives))
-{
-  name <- get(i)
-  if(any(!is.na(name$Slant_Range_m)) == F) #Check if there is any Slant Range data, if there is none (i.e, all entries are NA) skip trying to interpolate and move to the next file.
-  {
-    break
-  }
-  Slant <- zoo(name$Slant_Range_m, order.by = name$date_time)
-  Slant_interpolated <- na.approx(Slant, rule = 2, maxgap = 1) #Rule 2 means interpolate both forwards and backwards in the time series. Maxgap = 1 means that back to back NA values won't be replaced.
-  Slant_interpolated <- as.matrix(Slant_interpolated) #Convert back to a base object class (a matrix) to extract the components of the zoo object.
-  Slant_names <- rownames(Slant_interpolated) #Extract the rownames from the matrix (i.e. the timestamps)
-  Slant_interpolated <- Slant_interpolated[1:length(Slant_interpolated)] #Extract the data from the matrix
-  Slant_interpolated <- data.frame(date_time = ymd_hms(Slant_names), Slant_Range_m = Slant_interpolated) #Re-assemble the data into a data frame. Set the date_time to a POSIXct object
-  Slant_interpolated <- left_join(name, Slant_interpolated, by = "date_time") #Join the interpolated date to the dive data frame. 
-  Slant_interpolated$Slant_Range_m.y[Slant_interpolated$Slant_Range_m.y < 0] <- -9999  #Interpolation may have resulted in some negative values that are not -9999, reset all negative values to -9999
-  assign(i, mutate(name, Slant_Range_m = Slant_interpolated$Slant_Range_m.y)) #Replace the column with missing values with the one that were just interpolated
+# Variables to interpolate
+# ROV heading, speed, rogue or minizeus camera variables not interpolated
+variables <- c("Beacon_Longitude", "Beacon_Latitude", "Ship_Longitude", 
+               "Ship_Latitude", "Depth_m", "Ship_heading", 
+               "Altitude_m", "Slant_range_m")
 
+# Interpolate within each transect by variable
+for (v in variables){
+  ondat <- ondat %>% group_by(Transect_Name) %>% 
+    group_modify(~interpGaps(.x, variable={{v}})) %>% as.data.frame()
 }
+
+# Summary
+summary(ondat)
+
+# Check
+# Map each transect
+for (i in unique(ondat$Transect_Name)){
+  tmp <- ondat[ondat$Transect_Name == i,]
+  plot(tmp$Beacon_Longitude_interp,tmp$Beacon_Latitude_interp, col="red", asp=1, 
+       main=i, pch=16, cex=.5)
+  points(tmp$Beacon_Longitude,tmp$Beacon_Latitude, pch=16, cex=.5)
+}
+
+
+#-- start here
+
+# Convert greater than 20m to NA for altitude and > 10m for slant range
+
+
 
 
 
