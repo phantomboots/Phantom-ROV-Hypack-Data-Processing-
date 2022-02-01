@@ -57,7 +57,8 @@
 #           - Question: what to do when relationship is bad, don't fill?
 #             eg. speed_kts
 #           - attempted to make code more explicit, removed use of column order
-#
+#           - rewrote offset section to fix issue with if statements, need to
+#             confirm it is working as intented
 ################################################################################
 
 
@@ -106,6 +107,8 @@ dir.create(final_dir, recursive = TRUE) # Will warn if already exists
 # Specify offsets for ship GPS source. If more than one GPS is used, specify 
 # both sources independently. Offset to the port side are positive values for 
 # 'GPS_abeam' and offset towards the bow are positive for 'GPS_along'.
+# Question: are these the distances from the center of the ship, or from the 
+# ROV transponder? 
 GPS_abeam <- -4.1
 GPS_along <- -12.57
 
@@ -328,9 +331,6 @@ save(ondat, file=file.path(hypack_path, "HypackData_wASDL_onTransect.RData"))
 #===============================================================================
 # STEP 5 - INTERPOLATE TO FILL GAPS
 
-# --  function to do interpolation then apply to all variables
-# -- use na_interpolation, add Beacon Source = "interpolation"
-
 # Load ondat if the first part was run in a previous session
 if (!exists("ondat")){
   load(file=file.path(hypack_path, "HypackData_wASDL_onTransect.RData"))
@@ -345,10 +345,16 @@ interpGaps <- function( dat, variable, suffix="interp" ){
   total_not_missing <- sum(!is.na(dat[[variable]]))
   # check there is sufficient data for na_interpolation 
   if(total_not_missing >= 2) {
-    # Interpolate
-    dat[[fname]] <- imputeTS::na_interpolation(dat[[variable]], option = "linear") 
+    # For altitude and slant range over fill 1 row gaps
+    if( grepl("altitude|slant", variable, ignore.case = T) ){
+      # Interpolate, max gap = 1
+      dat[[fname]] <- na_interpolation(dat[[variable]], option = "linear", maxgap=1)
+    } else {
+      # Interpolate, max gap = INF
+      dat[[fname]] <- na_interpolation(dat[[variable]], option = "linear")
+    }
   }else {
-    # Don't interpolate if there aren't enough noNA values
+    # Don't interpolate if there aren't enough non-NA values
     dat[[fname]] <- dat[[variable]]
   }
   # Return
@@ -379,69 +385,75 @@ for (i in unique(ondat$Transect_Name)){
   points(tmp$Beacon_Longitude,tmp$Beacon_Latitude, pch=16, cex=.5)
 }
 
-
-#-- start here
-
-# Convert greater than 20m to NA for altitude and > 10m for slant range
-
-
+# Set out of bound alitude and slant range to NA
+# > 20m for altitude and > 10m for slant range
+ondat$Altitude_m_interp[ondat$Altitude_m_interp > 20] <- NA
+ondat$Slant_range_m_interp[ondat$Slant_range_m_interp > 10] <- NA
 
 
 
 #===============================================================================
 # STEP 6 - APPLY OFFSETS TO POSITIONS DATA
 
-#Calculate angles created by the abeam and along ship centerline offset values, to be used in calculation of offset from center of ship
-#for GPS antenna. For trigonometry purposes, abeam = opposite and along = adjacent.
 
-#Compute length of hypotenuse to determine offset distance, in meters.
+#-- start here - what if offset is 0 in one direction?
+
+# Calculate angles created by the abeam and along ship centerline offset values, 
+# to be used in calculation of offset from center of ship for GPS antenna. For 
+# trigonometry purposes, abeam = opposite and along = adjacent.
+
+# Compute length of hypotenuse to determine offset distance, in meters.
+# Offset dist will be 0 if GPS_abeam and GPS_along are 0
 offset_dist = sqrt((GPS_abeam^2) + (GPS_along^2))
 
-#For cases where the GPS antenna is offset in both abeam and along ship axes, calculate the angle from the center of the ship to the 
-#antenna location.
-
+# Calculate the angle from the center of the ship to the antenna location
 offset_angle <- atan(GPS_abeam/GPS_along)
-offset_angle <- offset_angle * (180/pi) #Convert to degrees.
+offset_angle <- abs(offset_angle * (180/pi)) #Convert to degrees.
 
-for(i in unique(Dives))
-{
-  name <- get(i)
-  
-  if(GPS_abeam == 0 & GPS_along == 0) {   #Case 1: the GPS antenna is dead center on the ship 
-    offset_dist = 0 
-  } else if (GPS_abeam == 0) {  #Case 2: GPS antenna along keel line, but fore/aft of center of ship. 
-    
-    name$bearing <- name$Ship_heading - 180 #Subtract 180 if it is astern of the center of the ship
-    name$bearing <- name$Ship_heading  #No change to the heading if it is ahead of the center of the ship
-
-  } else if (GPS_along == 0) {  #Case 3: GPS antenna centered fore/aft, but not along keel 
-    
-    name$bearing <- name$Ship_heading - 90 #Subtract 90 if is to the port of center.
-    name$bearing <- name$Ship_heading + 90 #Add 90 if it is to the stbd of center.
-
-  } else if (GPS_along != 0 & GPS_abeam != 0) {   #Case 4: Standard case, GPS offset in both abeam and alongship axes.
-    
-    name$bearing <- name$Ship_heading + offset_angle
-  }
-  
-  name$bearing[name$bearing > 360] <- name$bearing[name$bearing > 360] - 360 #Reduce integer >360 back to values less than of equal to 360
-  name$bearing[name$bearing < 0] <- name$bearing[name$bearing < 0] + 360 #Increase negative values by 360, to get correct bearing between 0 and 360
-
-  #Calculate the offset positions long/lat.
-    
-    for(k in 1:length(name$date_time))
-    {
-      start <- cbind(name$Main_Beacon_Long_interp[k], name$Main_Beacon_Lat_interp[k])
-      offset <- destPoint(start, name$bearing[k], offset_dist)
-      name$offset_long[k] <-  offset[1]
-      name$offset_lat[k] <- offset[2]
-      
-    }
-  mutate(name, Main_Beacon_Long_interp = offset_long, Main_Beacon_Lat_interp = offset_lat)
-  name <- name[,1:31] #Drop the offset_lat and offset_long columns
-  
-  assign(i, name)
+# When GPS is starboard and aft
+# abeam (-) and along (-)
+if (GPS_abeam < 0 & GPS_along < 0){
+  # Subtract offset angle
+  bearing <- ondat$Ship_heading - offset_angle
+  # If bearing is negative, add to 360
+  bearing[bearing < 0] <- bearing[bearing < 0] + 360
 }
+
+# When GPS is port and aft
+# abeam (+) and along (-)
+if (GPS_abeam > 0 & GPS_along < 0){
+  # Add offset angle
+  bearing <- ondat$Ship_heading + offset_angle
+  # If bearing is greater than 360, subtract 360 from bearing
+  bearing[bearing > 360] <- bearing[bearing > 360] - 360
+}
+
+# When GPS is starboard and forward
+# abeam (-) and along (+)
+if (GPS_abeam < 0 & GPS_along > 0){
+  # Add offset angle and 180
+  bearing <- ondat$Ship_heading + offset_angle + 180
+  # If bearing is greater than 360, subtract 360 from bearing
+  bearing[bearing > 360] <- bearing[bearing > 360] - 360
+}
+
+# When GPS is port and forward
+# abeam (+) and along (+)
+if (GPS_abeam > 0 & GPS_along > 0){
+  # Subtract offset angle and 180
+  bearing <- ondat$Ship_heading - offset_angle - 180
+  # If bearing is negative, add to 360
+  bearing[bearing < 0] <- bearing[bearing < 0] + 360
+}
+
+# Apply offsets
+offsets <- destPoint(p=ondat[c("Beacon_Longitude_interp",
+                               "Beacon_Latitude_interp")],
+                     b=bearing, 
+                     d=offset_dist)
+# Write over old long/lat with new offset values
+ondat$Beacon_Longitude_interp <- offsets[,1]
+ondat$Beacon_Latitude_interp <- offsets[,2]
 
 
 
