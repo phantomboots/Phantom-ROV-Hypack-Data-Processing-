@@ -58,7 +58,7 @@
 #             eg. speed_kts
 #           - attempted to make code more explicit, removed use of column order
 #           - rewrote offset section to fix issue with if statements, need to
-#             confirm it is working as intented
+#             confirm it is working as intended
 ################################################################################
 
 
@@ -395,71 +395,80 @@ ondat$Slant_range_m_interp[ondat$Slant_range_m_interp > 10] <- NA
 #===============================================================================
 # STEP 6 - APPLY OFFSETS TO POSITIONS DATA
 
-
-#-- start here - what if offset is 0 in one direction?
-
-# Calculate angles created by the abeam and along ship centerline offset values, 
-# to be used in calculation of offset from center of ship for GPS antenna. For 
-# trigonometry purposes, abeam = opposite and along = adjacent.
+# Calculate the bearing and distance from the center of the ship to the GPS 
+# antenna. The bearing and distance are used to calculate new lat and long
+# coordinates at the GPS antenna location (offset from the center of the ship).
+# Offset for the antenna to the port side are (+) for 'GPS_abeam' and offsets 
+# towards the bow are (+) for 'GPS_along'. For trig purposes, abeam = opposite 
+# and along = adjacent.
 
 # Compute length of hypotenuse to determine offset distance, in meters.
 # Offset dist will be 0 if GPS_abeam and GPS_along are 0
-offset_dist = sqrt((GPS_abeam^2) + (GPS_along^2))
+offset_dist <- sqrt((GPS_abeam^2) + (GPS_along^2))
 
 # Calculate the angle from the center of the ship to the antenna location
+# Absolute value
 offset_angle <- atan(GPS_abeam/GPS_along)
 offset_angle <- abs(offset_angle * (180/pi)) #Convert to degrees.
 
-# When GPS is starboard and aft
-# abeam (-) and along (-)
+# Set bearing when the GPS either along or abeam == 0
+# GPS antenna dead center on the ship 
+if(GPS_abeam == 0 & GPS_along == 0) {   
+  bearing <- 0 
+# GPS antenna along keel line, forward of the center of ship
+} else if (GPS_abeam == 0 & GPS_along > 0) { 
+  bearing <- ondat$Ship_heading
+  # GPS antenna along keel line, aft of the center of ship
+} else if (GPS_abeam == 0 & GPS_along < 0) { 
+  bearing <- ondat$Ship_heading - 180
+  # GPS antenna centered fore/aft, but port of the keel line
+} else if (GPS_abeam > 0 & GPS_along == 0) { 
+  bearing <- ondat$Ship_heading - 90
+  # GPS antenna centered fore/aft, but starboard of the keel line
+} else if (GPS_abeam < 0 & GPS_along == 0) { 
+  bearing <- ondat$Ship_heading + 90
+}
+
+# Calculate bearing with offset angle when along and abeam are not == 0 
+# When GPS is starboard and aft, abeam (-) and along (-)
 if (GPS_abeam < 0 & GPS_along < 0){
   # Subtract offset angle
-  bearing <- ondat$Ship_heading - offset_angle
-  # If bearing is negative, add to 360
-  bearing[bearing < 0] <- bearing[bearing < 0] + 360
-}
-
-# When GPS is port and aft
-# abeam (+) and along (-)
-if (GPS_abeam > 0 & GPS_along < 0){
-  # Add offset angle
-  bearing <- ondat$Ship_heading + offset_angle
-  # If bearing is greater than 360, subtract 360 from bearing
-  bearing[bearing > 360] <- bearing[bearing > 360] - 360
-}
-
-# When GPS is starboard and forward
-# abeam (-) and along (+)
-if (GPS_abeam < 0 & GPS_along > 0){
-  # Add offset angle and 180
-  bearing <- ondat$Ship_heading + offset_angle + 180
-  # If bearing is greater than 360, subtract 360 from bearing
-  bearing[bearing > 360] <- bearing[bearing > 360] - 360
-}
-
-# When GPS is port and forward
-# abeam (+) and along (+)
-if (GPS_abeam > 0 & GPS_along > 0){
-  # Subtract offset angle and 180
   bearing <- ondat$Ship_heading - offset_angle - 180
-  # If bearing is negative, add to 360
-  bearing[bearing < 0] <- bearing[bearing < 0] + 360
+# When GPS is port and aft, abeam (+) and along (-)
+} else if (GPS_abeam > 0 & GPS_along < 0){
+  # Add offset angle
+  bearing <- ondat$Ship_heading + offset_angle + 180
+# When GPS is starboard and forward, abeam (-) and along (+)
+} else if (GPS_abeam < 0 & GPS_along > 0){
+  # Add offset angle
+  bearing <- ondat$Ship_heading + offset_angle 
+# When GPS is port and forward, abeam (+) and along (+)
+} else if (GPS_abeam > 0 & GPS_along > 0){
+  # Subtract offset angle 
+  bearing <- ondat$Ship_heading - offset_angle
 }
 
-# Apply offsets
+# If bearing is negative, add to 360
+bearing[bearing < 0] <- bearing[bearing < 0] + 360
+# If bearing is greater than 360, subtract 360 from bearing
+bearing[bearing > 360] <- bearing[bearing > 360] - 360
+
+# Apply offsets from GPS to center of ship using bearing and offset_dist
 offsets <- destPoint(p=ondat[c("Beacon_Longitude_interp",
                                "Beacon_Latitude_interp")],
                      b=bearing, 
                      d=offset_dist)
-# Write over old long/lat with new offset values
-ondat$Beacon_Longitude_interp <- offsets[,1]
-ondat$Beacon_Latitude_interp <- offsets[,2]
+# Add new offset values to ondat
+ondat$Beacon_Longitude_interp_offset <- offsets[,1]
+ondat$Beacon_Latitude_interp_offset <- offsets[,2]
 
 
 
 #===============================================================================
 # STEP 7 - REMOVE BEACON OUTLIERS
 
+
+# -- start here
 
 #Calculate cross track distance between GPS track of the Ship and beacon position. Do this by creating a point distance matrix between
 #each interpolated beacon position, and the Ship_GPS point for that same second
