@@ -64,6 +64,8 @@
 #          - exports all data together instead of by transect
 #          - Saves data processing log with warnings, errors and data summaries
 #          - Using terra instead of rgdal, accepts NA values
+#          - Added before or after dive phase field, used before and after 
+#            of descent or ascent in case there are multiple transects in a dive
 ################################################################################
 
 
@@ -419,7 +421,7 @@ for (z in unique(positions$Zone) ){
 # Replace NaN with NA
 positions[is.na(positions)] <- NA
 # Subset
-pos <- positions[c("Datetime","Zone", "Beacon_Source", "Beacon_Gaps",
+pos <- positions[c("Datetime", "Beacon_Source", "Beacon_Gaps",
                    "Beacon_Longitude","Beacon_Latitude", 
                    "Ship_Longitude","Ship_Latitude")]
 # Summary
@@ -533,17 +535,7 @@ message("\nCombining all sensor data")
 df_list <- list(pos, depths, headings, altitude, slant, speed, pitchroll)
 sdat <- Reduce(function(x, y) merge(x, y, by="Datetime", all=TRUE), 
                df_list, accumulate=FALSE)
-# Question - should records without a utm zone be removed here?
-# # Warn if missing UTM zones
-# if( any(is.na(sdat$Zone)) ){
-#   warning( "Removing ", length(which(is.na(sdat$Zone))), 
-#            " rows because missing UTM zone info" )
-# }
-# # Remove any rows with NA values for UTM zone
-# # Cannot fill in position datagaps without a zone
-# sdat <- filter(sdat, !is.na(Zone))
-# Summary
-print(summary(sdat))
+
 # Sort by Datetime
 sdat <- sdat[order(sdat$Datetime),]
 
@@ -589,11 +581,26 @@ for(i in 1:nrow(dlog)){
   name <- dlog$Transect_Name[i]
   tmp <- data.frame(
     Transect_Name = name, 
-    Datetime = seq(dlog$Start_UTC_pad[i],dlog$End_UTC_pad[i], 1)
+    Datetime = seq(dlog$Start_UTC_pad[i],dlog$End_UTC_pad[i], 1),
+    Dive_Phase = "On_transect"
   )
   # Bind each transect to the previous
   slog <- rbind(slog, tmp)
 }
+# Change dive phase to before or after if before start or after end time
+for (n in unique(slog$Transect_Name)){
+  # Rows for transect n
+  ind <- which(slog$Transect_Name == n)
+  # Before start
+  st <- slog$Datetime[slog$Transect_Name == n] < 
+    dlog$Start_UTC[dlog$Transect_Name == n]
+  slog$Dive_Phase[ind[st]] <- "Before_transect"
+  # After end
+  en <- slog$Datetime[slog$Transect_Name == n] > 
+    dlog$End_UTC[dlog$Transect_Name == n]
+  slog$Dive_Phase[ind[en]] <- "After_transect"
+}
+
 # Save for use in later processing scripts
 save(slog, file=file.path(save_dir, "Dive_Times_1Hz.RData"))
 
@@ -614,6 +621,10 @@ for (i in unique(ondat$Transect_Name)){
   plot(tmp$Ship_Longitude,tmp$Ship_Latitude, asp=1, main=i, pch=16, cex=.5)
   points(tmp$Beacon_Longitude,tmp$Beacon_Latitude, col="blue", pch=16, cex=.5)
 }
+
+# Summary
+message("\nSummary of expanded 1Hz on-transect hypack data", "\n")
+print(summary(ondat))
 
 
 #===============================================================================

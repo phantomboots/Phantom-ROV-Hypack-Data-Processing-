@@ -62,11 +62,13 @@
 #           - Using distGeo instead of distm function for step 7
 #           - Only removing upper qauntile outliers (not lower)
 #           - Rounding to 6 decimal places
+#           - added log file
+#           - saves transect maps to file comparing rov and ship positions
+#           - exports all transects and each transect NAV files to csv
 ################################################################################
 
-# -- to do - add "interp" to Beacon source, replace NA values
-# -- saves figures to file
-# -- loop through transects and save in transect files as well
+# -- fix issue with transect P10056.1
+# -- add outlier checks after smoothing?
 
 #===============================================================================
 # Packages and session options
@@ -105,9 +107,11 @@ hypack_path <- file.path(wdir, project_folder, "Data/Initial_Processed_Data")
 ASDL_path <- file.path(wdir, project_folder, 
                        "Data/Advanced_Serial_Data_Logger/Full_Cruise")
 
-# Export directory 
+# Export directories 
 final_dir <- file.path(wdir, project_folder, "Data/Secondary_Processed_Data")
 dir.create(final_dir, recursive = TRUE) # Will warn if already exists
+fig_dir <- file.path(wdir, project_folder, "Data/Figures")
+dir.create(fig_dir, recursive = TRUE) # Will warn if already exists
 
 # Specify offsets for ship GPS source. If more than one GPS is used, specify 
 # both sources independently. Offset to the port side are positive values for 
@@ -132,8 +136,30 @@ loess_span = 0.05
 max_dist <- 100
 
 
+
 #===============================================================================
-# STEP 2 - READ IN THE HYPACK AND ASDL PROCESSED DATA 
+# STEP 2 - START LOG FILE
+
+# Sink output to file
+rout <- file( file.path(save_dir, "QAQC_Interp_Smoothing.log" ), open="wt" )
+sink( rout, split = TRUE ) # display output on console and send to log file
+sink( rout, type = "message" ) # send warnings to log file
+options(warn=1) # print warnings as they occur
+
+# Start the timer
+sTime <- Sys.time( )
+
+# Messages
+message("QAQC ", project_folder, " project data on ", Sys.Date(), "\n\n")
+message( "GPS abeam distance = ", GPS_abeam)
+message( "GPS along distance = ", GPS_along)
+message( "Smoothing window = ", smooth_window)
+message( "loess span = ", loess_span)
+message( "Maximum allowable distance between ship and ROV = ", max_dist, "\n\n")
+
+
+#===============================================================================
+# STEP 3 - READ IN THE HYPACK AND ASDL PROCESSED DATA 
 
 # Read all Master Log files
 Slant_Range_Master <- read.csv(file.path(ASDL_path,"Tritech_SlantRange_MasterLog.csv"))
@@ -164,7 +190,7 @@ summary(ondat)
 
 
 #===============================================================================
-# STEP 3 - USE ASDL TO FILL IN HYPACK DATA GAPS 
+# STEP 4 - USE ASDL TO FILL IN HYPACK DATA GAPS 
 
 # Function to fill gaps
 # Arguments:
@@ -324,7 +350,7 @@ ondat <- fillgaps(tofill=ondat,
 
 
 #===============================================================================
-# STEP 4 - ADD ASDL NOT IN HYPACK DATA 
+# STEP 5 - ADD ASDL NOT IN HYPACK DATA 
 
 # Merge MiniZeus fields
 ondat <- left_join(ondat, MiniZeus_ZFA_Master, by = "Datetime")
@@ -339,7 +365,7 @@ save(ondat, file=file.path(hypack_path, "HypackData_wASDL_onTransect.RData"))
 
 
 #===============================================================================
-# STEP 5 - INTERPOLATE TO FILL GAPS
+# STEP 6 - INTERPOLATE TO FILL GAPS
 
 # Load ondat if the first part was run in a previous session
 if (!exists("ondat")){
@@ -381,17 +407,24 @@ for (v in variables){
     group_modify(~interpGaps(.x, variable={{v}})) %>% as.data.frame()
 }
 # Summary
-summary(ondat)
+message("\nSummary after variable gaps were filled with linear interpolation", "\n")
+print(summary(ondat))
 
 # Set out of bound alitude and slant range to NA
 # > 20m for altitude and > 10m for slant range
 ondat$Altitude_m[ondat$Altitude_m > 20] <- NA
 ondat$Slant_range_m[ondat$Slant_range_m > 10] <- NA
 
+# Add "interp" label to beacon source
+ondat$Beacon_Source[is.na(ondat$Beacon_Source)] <- "Interpolation"
+# Check
+message("\nBeacon position sources:", "\n")
+print(table(ondat$Beacon_Source))
+
 
 
 #===============================================================================
-# STEP 6 - APPLY OFFSETS TO POSITIONS DATA
+# STEP 7 - APPLY OFFSETS TO POSITIONS DATA
 
 # Calculate the bearing and distance from the center of the ship to the GPS 
 # antenna. The bearing and distance are used to calculate new lat and long
@@ -452,6 +485,8 @@ bearing[bearing < 0] <- bearing[bearing < 0] + 360
 bearing[bearing > 360] <- bearing[bearing > 360] - 360
 
 # Apply offsets from GPS to center of ship using bearing and offset_dist
+# Question: should this offset only be applied to specific beacon sources? 
+# e.g. primary but not ship?
 offsets <- destPoint(p=ondat[c("Beacon_Longitude",
                                "Beacon_Latitude")],
                      b=bearing, 
@@ -463,7 +498,7 @@ ondat$Beacon_Latitude_offset <- offsets[,2]
 
 
 #===============================================================================
-# STEP 7 - REMOVE BEACON OUTLIERS
+# STEP 8 - REMOVE BEACON OUTLIERS
 
 # Calculate cross track distance between GPS track of the Ship and beacon 
 # position. Do this by creating a point distance matrix between each 
@@ -473,16 +508,21 @@ crossdist <- geosphere::distGeo(
   as.matrix(ondat[c("Beacon_Longitude_offset",
                     "Beacon_Latitude_offset")]))
 # Check
+message("\nSummary of distance between ship and ROV position", "\n")
+print(summary(crossdist))
+
 summary(crossdist)
 # Look for outliers (+/- 1.5*Interquartile range)
 outlier_limit <- median(crossdist) + (1.5*IQR(crossdist))
 # Remove distances greater than the max_dist and upper
 crossdist[crossdist > crossdist | crossdist > outlier_limit] <- NA
 # Check
-summary(crossdist)
+message("\nSummary of distance between ship and ROV position", 
+        " after outliers removed", "\n")
+print(summary(crossdist))
 # Set long/lat values outside of range to NA
-ondat$Beacon_Longitude_interp_offset[is.na(crossdist)] <- NA
-ondat$Beacon_Latitude_interp_offset[is.na(crossdist)] <- NA
+ondat$Beacon_Longitude_offset[is.na(crossdist)] <- NA
+ondat$Beacon_Longitude_offset[is.na(crossdist)] <- NA
 
 # Re-interpolate Beacon long/lat values now that outliers have been removed
 # Variables to interpolate
@@ -498,7 +538,7 @@ summary(ondat)
 
 
 #===============================================================================
-# STEP 8 - APPLY LOESS AND RUNNING MEDIAN SMOOTHING TO ROV POSITION DATA 
+# STEP 9 - APPLY LOESS AND RUNNING MEDIAN SMOOTHING TO ROV POSITION DATA 
 
 # Smoothing function
 # Rounds the values of the smoothed data to 6 decimal places
@@ -529,8 +569,11 @@ for (v in variables){
 # Map each transect
 for (i in unique(ondat$Transect_Name)){
   tmp <- ondat[ondat$Transect_Name == i,]
+  png(filename=file.path(fig_dir, paste0("Transect_", i, ".png")),
+      width=10, height=10, units = "in", res = 120)
   plot(tmp$Ship_Longitude,tmp$Ship_Latitude, 
-       asp=1, main=i, pch=16, cex=.3, col="#009E73")
+       asp=1, main=i, pch=16, cex=.3, col="#009E73", 
+       xlab = "Longitude", ylab="Latitude")
   points(tmp$Beacon_Longitude,tmp$Beacon_Latitude, 
          pch=16, cex=.3, col="#0072B2")
   points(tmp$Beacon_Longitude_offset,
@@ -542,28 +585,48 @@ for (i in unique(ondat$Transect_Name)){
   legend("bottom", horiz=T, bty = "n",
          legend = c("Ship", "ROV OG", "ROV offset", "ROV window", "ROV loess"),
          col = c("#009E73","#0072B2","#D55E00","grey20","grey50"), pch=16)
+  dev.off()
 }
 
 
 
 #===============================================================================
-# STEP 9 - WRITE FINAL PROCESSED DATA TO FILE
+# STEP 10 - WRITE FINAL PROCESSED DATA TO FILE
 
 
 # Fields to include in final processed files
-flds <- c("Datetime","Transect_Name","Beacon_Longitude_smoothed_window", 
-          "Beacon_Latitude_smoothed_window", "Beacon_Longitude_smoothed_loess",
-          "Beacon_Latitude_smoothed_loess", "Beacon_Longitude_offset",
-          "Beacon_Latitude_offset", "Beacon_Source", "Ship_Longitude",
-          "Ship_Latitude","Depth_m","Depth_Source","ROV_heading","Ship_heading",
-          "Speed_kts","Altitude_m","Slant_range_m","Rogue_roll","Rogue_pitch",
-          "MiniZeus_zoom_percent","MiniZeus_focus_percent",
-          "MiniZeus_aperture_percent","MiniZeus_pitch","MiniZeus_roll",
-          "ROV_pitch","ROV_roll")
+flds <- c("Datetime","Transect_Name", "Dive_Phase", 
+          "Beacon_Longitude_smoothed_window", "Beacon_Latitude_smoothed_window",
+          "Beacon_Longitude_smoothed_loess", "Beacon_Latitude_smoothed_loess",
+          "Beacon_Longitude_offset", "Beacon_Latitude_offset", "Beacon_Source", 
+          "Ship_Longitude", "Ship_Latitude", "Depth_m", "Depth_Source",
+          "ROV_heading", "Ship_heading", "Speed_kts", "Altitude_m", 
+          "Slant_range_m", "Rogue_roll", "Rogue_pitch", "MiniZeus_zoom_percent",
+          "MiniZeus_focus_percent", "MiniZeus_aperture_percent", 
+          "MiniZeus_pitch", "MiniZeus_roll", "ROV_pitch", "ROV_roll")
 # Save all transects in one csv
 write.csv(ondat[flds], quote = F, row.names = F,
           file = file.path(final_dir, 
-                           paste0(project_folder, "_NavigationData.csv")))
+                           paste0(project_folder, "_alltransect_NAV.csv")))
+
+
+# Export by transect
+for (i in unique(ondat$Transect_Name)){
+  tmp <- ondat[ondat$Transect_Name == i,]
+  write.csv(tmp[flds], quote = F, row.names = F,
+            file = file.path(final_dir, 
+                             paste0(project_folder, "_", i, "_NAV.csv")))
+}
 
 
 
+
+#===============================================================================
+# Print end of file message and elapsed time
+cat( "\nFinished: ", sep="" )
+print( Sys.time( ) - sTime )
+
+# Stop sinking output
+sink( type = "message" )
+sink( )
+closeAllConnections()
