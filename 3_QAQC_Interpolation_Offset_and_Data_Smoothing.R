@@ -59,9 +59,14 @@
 #           - attempted to make code more explicit, removed use of column order
 #           - rewrote offset section to fix issue with if statements, need to
 #             confirm it is working as intended
+#           - Using distGeo instead of distm function for step 7
+#           - Only removing upper qauntile outliers (not lower)
+#           - Rounding to 6 decimal places
 ################################################################################
 
-
+# -- to do - add "interp" to Beacon source, replace NA values
+# -- saves figures to file
+# -- loop through transects and save in transect files as well
 
 #===============================================================================
 # Packages and session options
@@ -120,6 +125,11 @@ smooth_window <- 31
 # of the total data set to use when weighting (e.g. span = 0.05 would use 5% 
 # of the total data set as the local weighting window).
 loess_span = 0.05
+
+# Set the maximum distance (in meters) that can occur between the ROV and ship
+# Will differ depending on the ROV
+# Question - what is this distance for phantom (100m) and boots (1000m)?
+max_dist <- 100
 
 
 #===============================================================================
@@ -338,9 +348,7 @@ if (!exists("ondat")){
 
 # Interpolate function
 # Only interpolates if there are more than 2 non-NA values
-interpGaps <- function( dat, variable, suffix="interp" ){
-  # Name of interpolated field
-  fname <- paste(variable, suffix, sep="_")
+interpGaps <- function( dat, variable ){
   # Check total not missing values
   total_not_missing <- sum(!is.na(dat[[variable]]))
   # check there is sufficient data for na_interpolation 
@@ -348,14 +356,14 @@ interpGaps <- function( dat, variable, suffix="interp" ){
     # For altitude and slant range over fill 1 row gaps
     if( grepl("altitude|slant", variable, ignore.case = T) ){
       # Interpolate, max gap = 1
-      dat[[fname]] <- na_interpolation(dat[[variable]], option = "linear", maxgap=1)
+      dat[[variable]] <- na_interpolation(dat[[variable]], option = "linear", maxgap=1)
     } else {
       # Interpolate, max gap = INF
-      dat[[fname]] <- na_interpolation(dat[[variable]], option = "linear")
+      dat[[variable]] <- na_interpolation(dat[[variable]], option = "linear")
     }
   }else {
     # Don't interpolate if there aren't enough non-NA values
-    dat[[fname]] <- dat[[variable]]
+    dat[[variable]] <- dat[[variable]]
   }
   # Return
   return(dat)
@@ -372,23 +380,13 @@ for (v in variables){
   ondat <- ondat %>% group_by(Transect_Name) %>% 
     group_modify(~interpGaps(.x, variable={{v}})) %>% as.data.frame()
 }
-
 # Summary
 summary(ondat)
 
-# Check
-# Map each transect
-for (i in unique(ondat$Transect_Name)){
-  tmp <- ondat[ondat$Transect_Name == i,]
-  plot(tmp$Beacon_Longitude_interp,tmp$Beacon_Latitude_interp, col="red", asp=1, 
-       main=i, pch=16, cex=.5)
-  points(tmp$Beacon_Longitude,tmp$Beacon_Latitude, pch=16, cex=.5)
-}
-
 # Set out of bound alitude and slant range to NA
 # > 20m for altitude and > 10m for slant range
-ondat$Altitude_m_interp[ondat$Altitude_m_interp > 20] <- NA
-ondat$Slant_range_m_interp[ondat$Slant_range_m_interp > 10] <- NA
+ondat$Altitude_m[ondat$Altitude_m > 20] <- NA
+ondat$Slant_range_m[ondat$Slant_range_m > 10] <- NA
 
 
 
@@ -411,7 +409,7 @@ offset_dist <- sqrt((GPS_abeam^2) + (GPS_along^2))
 offset_angle <- atan(GPS_abeam/GPS_along)
 offset_angle <- abs(offset_angle * (180/pi)) #Convert to degrees.
 
-# Set bearing when the GPS either along or abeam == 0
+# Set bearing when the GPS either along=0 or abeam == 0 or both
 # GPS antenna dead center on the ship 
 if(GPS_abeam == 0 & GPS_along == 0) {   
   bearing <- 0 
@@ -454,102 +452,97 @@ bearing[bearing < 0] <- bearing[bearing < 0] + 360
 bearing[bearing > 360] <- bearing[bearing > 360] - 360
 
 # Apply offsets from GPS to center of ship using bearing and offset_dist
-offsets <- destPoint(p=ondat[c("Beacon_Longitude_interp",
-                               "Beacon_Latitude_interp")],
+offsets <- destPoint(p=ondat[c("Beacon_Longitude",
+                               "Beacon_Latitude")],
                      b=bearing, 
                      d=offset_dist)
 # Add new offset values to ondat
-ondat$Beacon_Longitude_interp_offset <- offsets[,1]
-ondat$Beacon_Latitude_interp_offset <- offsets[,2]
+ondat$Beacon_Longitude_offset <- offsets[,1]
+ondat$Beacon_Latitude_offset <- offsets[,2]
 
 
 
 #===============================================================================
 # STEP 7 - REMOVE BEACON OUTLIERS
 
+# Calculate cross track distance between GPS track of the Ship and beacon 
+# position. Do this by creating a point distance matrix between each 
+# interpolated beacon position, and the Ship_GPS point for that same second
+crossdist <- geosphere::distGeo(
+  as.matrix(ondat[c("Ship_Longitude","Ship_Latitude")]), 
+  as.matrix(ondat[c("Beacon_Longitude_offset",
+                    "Beacon_Latitude_offset")]))
+# Check
+summary(crossdist)
+# Look for outliers (+/- 1.5*Interquartile range)
+outlier_limit <- median(crossdist) + (1.5*IQR(crossdist))
+# Remove distances greater than the max_dist and upper
+crossdist[crossdist > crossdist | crossdist > outlier_limit] <- NA
+# Check
+summary(crossdist)
+# Set long/lat values outside of range to NA
+ondat$Beacon_Longitude_interp_offset[is.na(crossdist)] <- NA
+ondat$Beacon_Latitude_interp_offset[is.na(crossdist)] <- NA
 
-# -- start here
-
-#Calculate cross track distance between GPS track of the Ship and beacon position. Do this by creating a point distance matrix between
-#each interpolated beacon position, and the Ship_GPS point for that same second
-
-for(k in unique(Dives))
-{
-  name <- get(k)
-  for(i in 1:length(name$date_time))
-  {
-    ship <- cbind(name$Ship_Long_interp[i], name$Ship_Lat_interp[i])
-    beacon <- cbind(name$Main_Beacon_Long_interp[i], name$Main_Beacon_Lat_interp[i])
-    XTE <- distm(ship, beacon)
-    name$XTE[i] <- as.numeric(XTE[,1])
-  }
-  assign(k, name)
+# Re-interpolate Beacon long/lat values now that outliers have been removed
+# Variables to interpolate
+variables <- c("Beacon_Longitude_offset", 
+               "Beacon_Latitude_offset")
+# Interpolate within each transect by variable
+for (v in variables){
+  ondat <- ondat %>% group_by(Transect_Name) %>% 
+    group_modify(~interpGaps(.x, variable={{v}})) %>% as.data.frame()
 }
-
-#Calculate the median XTE value for each dive, and detect outliers as median +/- 1.5*Interquartile range. Set the lat/long values 
-#for any indices outside of the values to NA.
-
-for(k in unique(Dives))
-{
-  name <- get(k)
-  upper <- median(name$XTE) + (1.5*IQR(name$XTE))
-  lower <- median(name$XTE) - (1.5*IQR(name$XTE))
-  name$Main_Beacon_Lat_interp[name$XTE > upper | name$XTE < lower] <- NA
-  name$Main_Beacon_Long_interp[name$XTE > upper | name$XTE < lower] <- NA
-  assign(k, name)
-}
-
-#Coerce to a zoo object and run linear interpolation on the Beacon Lat/Long that have had the outlier values set to NA
-
-for(i in unique(Dives))
-{
-  name <- get(i)
-  Long <- zoo(name$Main_Beacon_Long_interp, order.by = name$date_time)
-  Lat <- zoo(name$Main_Beacon_Lat_interp, order.by = name$date_time)
-  Long_intepolated <- na.approx(Long, rule = 2) #Rule 2 means interpolate both forwards and backwards in the time series.
-  Long_intepolated <- as.matrix(Long_intepolated) #Convert back to a base object class (a matrix) to extract the components of the zoo object.
-  name$Main_Beacon_Long_interp <- Long_intepolated[1:length(Long_intepolated)]
-  Lat_intepolated <- na.approx(Lat, rule = 2) #Rule 2 means interpolate both forwards and backwards in the time series.
-  Lat_intepolated <- as.matrix(Lat_intepolated) #Convert back to a base object class (a matrix) to extract the components of the zoo object.
-  name$Main_Beacon_Lat_interp <- Lat_intepolated[1:length(Lat_intepolated)]
-  assign(i, name)
-}
-
-
-
+# Summary
+summary(ondat)
 
 
 #===============================================================================
 # STEP 8 - APPLY LOESS AND RUNNING MEDIAN SMOOTHING TO ROV POSITION DATA 
 
-
-
-#Smooth the interpolated beacon position with the Loess smoother, with an alpha value of 0.05
-
-for(i in unique(Dives))
-{
-  name <- get(i)
-  loess_lat <- loess(name$Main_Beacon_Lat_interp ~ as.numeric(name$date_time), span = loess_span)
-  name$loess_lat <- loess_lat$fitted
-  loess_long <- loess(name$Main_Beacon_Long_interp ~ as.numeric(name$date_time), span = loess_span)
-  name$loess_long <- loess_long$fitted
-  assign(i, name)
+# Smoothing function
+# Rounds the values of the smoothed data to 6 decimal places
+smoothCoords <- function( dat, variable ){
+  # base variable name
+  basename <- sub("_offset.*","", variable)
+  # loess smooth
+  lname <- paste(basename, "smoothed_loess", sep="_")
+  dat[[lname]] <- round(loess(dat[[variable]] ~ as.numeric(dat$Datetime), 
+                        span = loess_span)$fitted, 6)
+  # window smooth
+  sname <- paste(basename, "smoothed_window", sep="_")
+  dat[[sname]] <- round(runmed(dat[[variable]], smooth_window), 6)
+  # Return
+  return(dat)
 }
 
-
-#Smooth the interpolated beacon position with a running median - set the bandwitdth to ~ 1 min (59 seconds). Must be an odd value.
-#Round the values of the smoothed data to 5 decimal places; keep trailing zeros!
-
-for(i in unique(Dives))
-{
-  name <- get(i)
-  name$Main_Beacon_Lat_smooth <- runmed(name$Main_Beacon_Lat_interp, smooth_window)
-  name$Main_Beacon_Long_smooth <- runmed(name$Main_Beacon_Long_interp, smooth_window)
-  name$Main_Beacon_Lat_smooth <- round(name$Main_Beacon_Lat_smooth, digits = 5)
-  name$Main_Beacon_Long_smooth <- round(name$Main_Beacon_Long_smooth, digits = 5)
-  assign(i, name)
+# Variables to smooth
+variables <- c("Beacon_Longitude_offset", 
+               "Beacon_Latitude_offset")
+# Smooth using loess and window method within each transect by variable
+for (v in variables){
+  ondat <- ondat %>% group_by(Transect_Name) %>% 
+    group_modify(~smoothCoords(.x, variable={{v}})) %>% as.data.frame()
 }
 
+# Check
+# Map each transect
+for (i in unique(ondat$Transect_Name)){
+  tmp <- ondat[ondat$Transect_Name == i,]
+  plot(tmp$Ship_Longitude,tmp$Ship_Latitude, 
+       asp=1, main=i, pch=16, cex=.3, col="#009E73")
+  points(tmp$Beacon_Longitude,tmp$Beacon_Latitude, 
+         pch=16, cex=.3, col="#0072B2")
+  points(tmp$Beacon_Longitude_offset,
+         tmp$Beacon_Latitude_offset, pch=16, cex=.4, col="#D55E00")
+  points(tmp$Beacon_Longitude_smoothed_window,
+         tmp$Beacon_Latitude_smoothed_window, pch=16, cex=.4, col="grey20")
+  points(tmp$Beacon_Longitude_smoothed_loess,
+         tmp$Beacon_Latitude_smoothed_loess, pch=16, cex=.4, col="grey50")
+  legend("bottom", horiz=T, bty = "n",
+         legend = c("Ship", "ROV OG", "ROV offset", "ROV window", "ROV loess"),
+         col = c("#009E73","#0072B2","#D55E00","grey20","grey50"), pch=16)
+}
 
 
 
@@ -557,19 +550,20 @@ for(i in unique(Dives))
 # STEP 9 - WRITE FINAL PROCESSED DATA TO FILE
 
 
-#Create final processed files, and write to .CSV.
-
-for(i in unique(Dives))
-{
-  name <- get(i)
-  name <- name[,c(1:2,33:34,10,9,35:36,12,11,13:18,21:22,19:20,24:30)]
-  names(name) <- c("date_time","Transect_Name","Beacon_Lat_loess","Beacon_Long_loess","Beacon_Lat_interp","Beacon_Long_interp","Beacon_Lat_smoothed",
-                   "Beacon_Long_smoothed","Ship_Lat_interp","Ship_Long_interp","Depth_m","Phantom_heading","Ship_Heading","Speed_kts",
-                   "Altitude_m","Slant_Range_m","Best_Depth_Source","Best_Position_Source","RogueCam_roll",
-                   "RogueCam_pitch","MiniZeus_zoom_percent","MiniZeus_focus_percent","MiniZeus_aperture_percent","MiniZeus_pitch","MiniZeus_roll","ROV_pitch","ROV_roll")
-  write.csv(name, file = paste0(final_dir,"/",i), quote = F, row.names = F)
-  assign(i, name)
-}
+# Fields to include in final processed files
+flds <- c("Datetime","Transect_Name","Beacon_Longitude_smoothed_window", 
+          "Beacon_Latitude_smoothed_window", "Beacon_Longitude_smoothed_loess",
+          "Beacon_Latitude_smoothed_loess", "Beacon_Longitude_offset",
+          "Beacon_Latitude_offset", "Beacon_Source", "Ship_Longitude",
+          "Ship_Latitude","Depth_m","Depth_Source","ROV_heading","Ship_heading",
+          "Speed_kts","Altitude_m","Slant_range_m","Rogue_roll","Rogue_pitch",
+          "MiniZeus_zoom_percent","MiniZeus_focus_percent",
+          "MiniZeus_aperture_percent","MiniZeus_pitch","MiniZeus_roll",
+          "ROV_pitch","ROV_roll")
+# Save all transects in one csv
+write.csv(ondat[flds], quote = F, row.names = F,
+          file = file.path(final_dir, 
+                           paste0(project_folder, "_NavigationData.csv")))
 
 
 

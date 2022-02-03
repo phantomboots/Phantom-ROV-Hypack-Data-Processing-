@@ -560,12 +560,13 @@ New_Tracking$Beacon_Latitude <- Beacon_Coords[,2]
 # Check
 plot(New_Tracking$Beacon_Longitude, New_Tracking$Beacon_Latitude, asp=1)
 # Drop unnecessary columns
-New_Tracking <- New_Tracking[c("Datetime","Beacon_Longitude","Beacon_Latitude")]
+New_Tracking <- New_Tracking[c("Datetime","Beacon_Longitude",
+                               "Beacon_Latitude")]
 # Summary
 print(summary(New_Tracking))
 # Write
-write.csv(New_Tracking, file.path(save_dir,"Manual_Beacon_Tracking_MasterLog.csv"),
-          quote = F, row.names = F)
+write.csv(New_Tracking, quote = F, row.names = F,
+          file.path(save_dir,"Manual_Beacon_Tracking_MasterLog.csv"))
 
 
 
