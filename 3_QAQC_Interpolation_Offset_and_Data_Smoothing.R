@@ -67,8 +67,7 @@
 #           - exports all transects and each transect NAV files to csv
 ################################################################################
 
-# -- fix issue with transect P10056.1
-# -- add outlier checks after smoothing?
+
 
 #===============================================================================
 # Packages and session options
@@ -522,7 +521,7 @@ message("\nSummary of distance between ship and ROV position",
 print(summary(crossdist))
 # Set long/lat values outside of range to NA
 ondat$Beacon_Longitude_offset[is.na(crossdist)] <- NA
-ondat$Beacon_Longitude_offset[is.na(crossdist)] <- NA
+ondat$Beacon_Latitude_offset[is.na(crossdist)] <- NA
 
 # Re-interpolate Beacon long/lat values now that outliers have been removed
 # Variables to interpolate
@@ -533,6 +532,7 @@ for (v in variables){
   ondat <- ondat %>% group_by(Transect_Name) %>% 
     group_modify(~interpGaps(.x, variable={{v}})) %>% as.data.frame()
 }
+
 # Summary
 summary(ondat)
 
@@ -572,16 +572,16 @@ for (i in unique(ondat$Transect_Name)){
   png(filename=file.path(fig_dir, paste0("Transect_", i, ".png")),
       width=10, height=10, units = "in", res = 120)
   plot(tmp$Ship_Longitude,tmp$Ship_Latitude, 
-       asp=1, main=i, pch=16, cex=.3, col="#009E73", 
+       asp=1, main=i, pch=16, cex=.5, col="#009E73", 
        xlab = "Longitude", ylab="Latitude")
   points(tmp$Beacon_Longitude,tmp$Beacon_Latitude, 
-         pch=16, cex=.3, col="#0072B2")
+         pch=16, cex=.5, col="#0072B2")
   points(tmp$Beacon_Longitude_offset,
-         tmp$Beacon_Latitude_offset, pch=16, cex=.4, col="#D55E00")
+         tmp$Beacon_Latitude_offset, pch=16, cex=.5, col="#D55E00")
   points(tmp$Beacon_Longitude_smoothed_window,
-         tmp$Beacon_Latitude_smoothed_window, pch=16, cex=.4, col="grey20")
+         tmp$Beacon_Latitude_smoothed_window, pch=16, cex=.5, col="grey20")
   points(tmp$Beacon_Longitude_smoothed_loess,
-         tmp$Beacon_Latitude_smoothed_loess, pch=16, cex=.4, col="grey50")
+         tmp$Beacon_Latitude_smoothed_loess, pch=16, cex=.5, col="grey50")
   legend("bottom", horiz=T, bty = "n",
          legend = c("Ship", "ROV OG", "ROV offset", "ROV window", "ROV loess"),
          col = c("#009E73","#0072B2","#D55E00","grey20","grey50"), pch=16)
@@ -630,3 +630,5 @@ print( Sys.time( ) - sTime )
 sink( type = "message" )
 sink( )
 closeAllConnections()
+
+
