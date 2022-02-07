@@ -65,6 +65,9 @@
 #           - added log file
 #           - saves transect maps to file comparing rov and ship positions
 #           - exports all transects and each transect NAV files to csv
+#           - removed ship_name as it wasn't used
+#           - added original script 4 to this script to reduce # of steps
+#           - uses RBR CTD data from excel files first, then ASDL backup second
 ################################################################################
 
 
@@ -73,7 +76,7 @@
 # Packages and session options
 
 # Check if necessary packages are present, install as required.
-packages <- c("lubridate","dplyr","stringr","imputeTS","geosphere")
+packages <- c("lubridate","dplyr","stringr","imputeTS","geosphere","readxl")
 new_packages <- packages[!(packages %in% installed.packages()[,"Package"])]
 if(length(new_packages)) install.packages(new_packages)
 
@@ -93,21 +96,21 @@ options(digits = 12)
 # The project folder and needs to be in the working directory
 wdir <- getwd() 
 
-# Name of Ship used in the survey
-ship_name <- "CCGS_Vector"
-
 # Project folder
 project_folder <- "Pac2021-054_phantom"
 
 # Directory where Hypack processed data are stored
-hypack_path <- file.path(wdir, project_folder, "Data/Initial_Processed_Data")
+hypack_path <- file.path(wdir, project_folder, "Data/1.Hypack_Processed_Data")
+
+# Directory where RBR CTD excel files are stored
+RBR_path <- file.path(wdir, project_folder, "Data/RBR_CTD_Data")
 
 # Directory with ASDL master files
 ASDL_path <- file.path(wdir, project_folder, 
-                       "Data/Advanced_Serial_Data_Logger/Full_Cruise")
+                       "Data/2.ASDL_Processed_Data")
 
 # Export directories 
-final_dir <- file.path(wdir, project_folder, "Data/Secondary_Processed_Data")
+final_dir <- file.path(wdir, project_folder, "Data/3.Final_Processed_Data")
 dir.create(final_dir, recursive = TRUE) # Will warn if already exists
 fig_dir <- file.path(wdir, project_folder, "Data/Figures")
 dir.create(fig_dir, recursive = TRUE) # Will warn if already exists
@@ -140,7 +143,8 @@ max_dist <- 100
 # STEP 2 - START LOG FILE
 
 # Sink output to file
-rout <- file( file.path(save_dir, "QAQC_Interp_Smoothing.log" ), open="wt" )
+rout <- file( file.path(wdir,project_folder,"Data","3.QAQC_Processing.log" ), 
+              open="wt" )
 sink( rout, split = TRUE ) # display output on console and send to log file
 sink( rout, type = "message" ) # send warnings to log file
 options(warn=1) # print warnings as they occur
@@ -158,7 +162,7 @@ message( "Maximum allowable distance between ship and ROV = ", max_dist, "\n\n")
 
 
 #===============================================================================
-# STEP 3 - READ IN THE HYPACK AND ASDL PROCESSED DATA 
+# STEP 3 - READ IN THE HYPACK AND ASDL PROCESSED DATA, AND RBR EXCEL FILES
 
 # Read all Master Log files
 Slant_Range_Master <- read.csv(file.path(ASDL_path,"Tritech_SlantRange_MasterLog.csv"))
@@ -175,21 +179,42 @@ DVL_Master <- read.csv(file.path(ASDL_path,"ROWETECH_DVL_MasterLog.csv"))
 DVL_Master$Datetime <- ymd_hms(DVL_Master$Datetime)
 ROV_Heading_Depth_Master <- read.csv(file.path(ASDL_path,"ROV_Heading_Depth_MasterLog.csv"))
 ROV_Heading_Depth_Master$Datetime <- ymd_hms(ROV_Heading_Depth_Master$Datetime)
+ROV_Heading_Depth_Master$ID <- "ROV Heading Depth ASDL"
 RBR_Master <- read.csv(file.path(ASDL_path,"RBR_CTD_MasterLog.csv"))
 RBR_Master$Datetime <- ymd_hms(RBR_Master$Datetime)
-RBR_Master$ID <- "RBR CTD backup"
+RBR_Master$ID <- "RBR CTD ASDL"
 MiniZeus_ZFA_Master <- read.csv(file.path(ASDL_path,"MiniZeus_ZFA_MasterLog.csv"))
 MiniZeus_ZFA_Master$Datetime <- ymd_hms(MiniZeus_ZFA_Master$Datetime)
 ROV_MiniZeus_IMUS_Master <- read.csv(file.path(ASDL_path,"Zeus_ROV_IMU_MasterLog.csv"))
 ROV_MiniZeus_IMUS_Master$Datetime <- ymd_hms(ROV_MiniZeus_IMUS_Master$Datetime)
 
+# Read in RBR data from .xlsx files
+# Create blank data frame to fill in the loop below.
+RBR_Data <- data.frame()
+# Read in all RBR .xlsx files in the directory, merge into one larger dataframe
+RBR_files <- list.files(path=RBR_input, pattern = ".xlsx", full.names = T)
+for(i in RBR_files){
+  # High max guess range, sometimes there are many rows missing at beginning
+  tmp <- read_xlsx(i, sheet = "Data", skip = 1, guess_max = 10000)
+  RBR_Data <- bind_rows(RBR_Data, tmp)
+}
+# Rename
+names(RBR_Data) <- c("Datetime", "Conductivity_mS_cm", "Temperature_C",
+                     "Pressure_dbar", "DO_Sat_percent", "Sea_Pressure_dbar",
+                     "Depth_m", "Salinity_PSU", "Sound_Speed_m_s",
+                     "Specific_Cond_uS_cm", "Density_kg_m3", "DO_conc_mgL")
+# Add source ID
+RBR_Data$ID <- "RBR CTD XLS"
+# Summary 
+message("RBR data summary from merged excel files:")
+print(summary(RBR_Data))
+
 # Read in transect data processed at a 1Hz from Hypack (named: ondat)
 load(file=file.path(hypack_path, "HypackData_onTransect.RData"))
-summary(ondat)
 
 
 #===============================================================================
-# STEP 4 - USE ASDL TO FILL IN HYPACK DATA GAPS 
+# STEP 4 - USE ASDL AND RBR TO FILL IN HYPACK DATA GAPS 
 
 # Function to fill gaps
 # Arguments:
@@ -288,14 +313,23 @@ ondat <- fillgaps(tofill=ondat,
 #     DEPTH    #
 #==============#
 # Check for relationship between tofill and forfilling
+tmp <- merge(ondat, RBR_Data, by="Datetime")
+if(nrow(tmp) > 0) plot(tmp$Depth_m.x, tmp$Depth_m.y)
+# Fill gaps in depth with 'ROV_Heading_Depth_MasterLog.csv'
+message( "Filling depth with RBR CTD data:")
+ondat <- fillgaps(tofill=ondat,
+                  forfilling=RBR_Data,
+                  sourcefields=c("Depth_m","Depth_Source"),
+                  fillfields=c("Depth_m","ID"))
+# Check for relationship between tofill and forfilling
 tmp <- merge(ondat, RBR_Master, by="Datetime")
 if(nrow(tmp) > 0) plot(tmp$Depth_m.x, tmp$Depth_m.y)
 # Fill gaps in depth with 'ROV_Heading_Depth_MasterLog.csv'
 message( "Filling depth with RBR CTD backup:")
 ondat <- fillgaps(tofill=ondat,
                   forfilling=RBR_Master,
-                  sourcefields="Depth_m",
-                  fillfields="Depth_m" )
+                  sourcefields=c("Depth_m","Depth_Source"),
+                  fillfields=c("Depth_m","ID"))
 # Check for relationship between tofill and forfilling
 tmp <- merge(ondat, ROV_Heading_Depth_Master, by="Datetime")
 if(nrow(tmp) > 0) plot(tmp$Depth_m.x, tmp$Depth_m.y)
@@ -303,8 +337,8 @@ if(nrow(tmp) > 0) plot(tmp$Depth_m.x, tmp$Depth_m.y)
 message( "Filling depth with 'ROV_Heading_Depth_MasterLog.csv':")
 ondat <- fillgaps(tofill=ondat,
                   forfilling=ROV_Heading_Depth_Master,
-                  sourcefields="Depth_m",
-                  fillfields="Depth_m" )
+                  sourcefields=c("Depth_m","Depth_Source"),
+                  fillfields=c("Depth_m","ID"))
 
 #==================#
 #    SLANT RANGE   #
@@ -349,27 +383,33 @@ ondat <- fillgaps(tofill=ondat,
 
 
 #===============================================================================
-# STEP 5 - ADD ASDL NOT IN HYPACK DATA 
+# STEP 5 - ADD ASDL and RBR CTD DATA NOT IN HYPACK DATA 
 
 # Merge MiniZeus fields
 ondat <- left_join(ondat, MiniZeus_ZFA_Master, by = "Datetime")
 ondat <- left_join(ondat, ROV_MiniZeus_IMUS_Master, by = "Datetime")
+ondat <- left_join(ondat, RBR_Data[!names(RBR_Data) %in% c("Depth_m","ID")], 
+                   by = "Datetime")
 
+# Use ASDL data to fill RBR CTD data gaps
+# Looks for gaps using the first field => Conductivity_mS_cm   
+message( "Filling RBR CTD gaps with ASDL RBR master backup:")
+ondat <- fillgaps(tofill=ondat,
+                  forfilling=RBR_Master,
+                  sourcefields=c("Conductivity_mS_cm", "Temperature_C",
+                                 "Pressure_dbar", "DO_Sat_percent", 
+                                 "Sea_Pressure_dbar", "Salinity_PSU", 
+                                 "Sound_Speed_m_s", "Specific_Cond_uS_cm"),
+                  fillfields=c("Conductivity_mS_cm", "Temperature_C",
+                               "Pressure_dbar", "DO_Sat_percent", 
+                               "Sea_Pressure_dbar", "Salinity_PSU", 
+                               "Sound_Speed_m_s", "Specific_Cond_uS_cm"))
 # Summary
 summary(ondat)
-
-# Save data after ASDL was used to fill gaps and extra fields added
-save(ondat, file=file.path(hypack_path, "HypackData_wASDL_onTransect.RData"))
-
 
 
 #===============================================================================
 # STEP 6 - INTERPOLATE TO FILL GAPS
-
-# Load ondat if the first part was run in a previous session
-if (!exists("ondat")){
-  load(file=file.path(hypack_path, "HypackData_wASDL_onTransect.RData"))
-}
 
 # Interpolate function
 # Only interpolates if there are more than 2 non-NA values
@@ -510,7 +550,6 @@ crossdist <- geosphere::distGeo(
 message("\nSummary of distance between ship and ROV position", "\n")
 print(summary(crossdist))
 
-summary(crossdist)
 # Look for outliers (+/- 1.5*Interquartile range)
 outlier_limit <- median(crossdist) + (1.5*IQR(crossdist))
 # Remove distances greater than the max_dist and upper
@@ -533,8 +572,6 @@ for (v in variables){
     group_modify(~interpGaps(.x, variable={{v}})) %>% as.data.frame()
 }
 
-# Summary
-summary(ondat)
 
 
 #===============================================================================
@@ -604,16 +641,24 @@ flds <- c("Datetime","Transect_Name", "Dive_Phase",
           "Slant_range_m", "Rogue_roll", "Rogue_pitch", "MiniZeus_zoom_percent",
           "MiniZeus_focus_percent", "MiniZeus_aperture_percent", 
           "MiniZeus_pitch", "MiniZeus_roll", "ROV_pitch", "ROV_roll")
+
+# Final dataset
+fdat <- ondat[flds]
+
+# Save as Rdata
+save(fdat, file=file.path(final_dir, paste0(project_folder, 
+                                                   "_alltransect_NAV.RData")))
+
 # Save all transects in one csv
-write.csv(ondat[flds], quote = F, row.names = F,
+write.csv(fdat, quote = F, row.names = F,
           file = file.path(final_dir, 
                            paste0(project_folder, "_alltransect_NAV.csv")))
 
 
 # Export by transect
-for (i in unique(ondat$Transect_Name)){
-  tmp <- ondat[ondat$Transect_Name == i,]
-  write.csv(tmp[flds], quote = F, row.names = F,
+for (i in unique(fdat$Transect_Name)){
+  tmp <- fdat[fdat$Transect_Name == i,]
+  write.csv(tmp, quote = F, row.names = F,
             file = file.path(final_dir, 
                              paste0(project_folder, "_", i, "_NAV.csv")))
 }

@@ -96,7 +96,7 @@ ASDL_dir <- file.path(wdir, project_folder, "Data/Advanced_Serial_Data_Logger")
 
 # Set the directory for saving of the master files.
 # Path must start from your working directory, check with getwd(), or full paths
-save_dir <- file.path(wdir, project_folder, "Data/Advanced_Serial_Data_Logger/Full_Cruise")
+save_dir <- file.path(wdir, project_folder, "Data/2.ASDL_Processed_Data")
 dir.create(save_dir, recursive = TRUE) # Will warn if already exists
 
 # Offset values for IMUs located in the Phantom's subsea can and on the MiniZeus
@@ -117,7 +117,8 @@ max_dist <- 100
 # STEP 2 - START LOG FILE
 
 # Sink output to file
-rout <- file( file.path(save_dir, "ASDL_Data_Parser.log" ), open="wt" )
+rout <- file( file.path(wdir,project_folder,"Data","2.ASDL_Data_Parser.log" ), 
+              open="wt" )
 sink( rout, split = TRUE ) # display output on console and send to log file
 sink( rout, type = "message" ) # send warnings to log file
 options(warn=1) # print warnings as they occur
@@ -293,9 +294,10 @@ if( length(RBR_files) > 0 ){
   # Bind into data frame
   RBR_all <- do.call("rbind", rbrlist)
   # Rename
-  names(RBR_all) <- c("Datetime","Conductivity_mS/cm","Temp_C","Pressure_dbar",
-                      "Dissolved_02_sat_%","Sea_Pressure_dbar", "Depth_m",
-                      "Salinity_PSU","Sound_Speed_m/s","Specific_Cond_uS/cm")
+  names(RBR_all) <- c("Datetime","Conductivity_mS_cm","Temperature_C",
+                      "Pressure_dbar","DO_Sat_percent","Sea_Pressure_dbar", 
+                      "Depth_m","Salinity_PSU","Sound_Speed_m_s",
+                      "Specific_Cond_uS_cm")
   # Summary
   print(summary(RBR_all))
   # Check
@@ -304,6 +306,7 @@ if( length(RBR_files) > 0 ){
   write.csv(RBR_all, file.path(save_dir,"RBR_CTD_MasterLog.csv"),
             quote = F, row.names = F)
 }
+
 
 #=========================#
 #   HEMISPHERE POSITION   #

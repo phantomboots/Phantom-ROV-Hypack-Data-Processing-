@@ -116,8 +116,8 @@ hypack_path <- file.path(wdir, project_folder, "Data/Raw")
 # Directory where dive log csv file is stored
 divelog_path <- file.path(wdir, project_folder, "Data/Dive_Logs/Dive_Log.csv")
 
-# Create directory for saving both clipped and unclipped .CSV files
-save_dir <- file.path(wdir, project_folder, "Data/Initial_Processed_Data")
+# Create directory for saving .CSV files
+save_dir <- file.path(wdir, project_folder, "Data/1.Hypack_Processed_Data")
 dir.create(save_dir, recursive = TRUE) # Will warn if already exists
 
 
@@ -152,7 +152,8 @@ depth_secondary <- "ROV_Heading_Depth_UTurns" # Dev 5
 # STEP 3 - START LOG FILE
 
 # Sink output to file
-rout <- file( file.path(save_dir, "Hypack_Data_Parser.log" ), open="wt" )
+rout <- file( file.path(wdir,project_folder,"Data","1.Hypack_Data_Parser.log"), 
+              open="wt" )
 sink( rout, split = TRUE ) # display output on console and send to log file
 sink( rout, type = "message" ) # send warnings to log file
 options(warn=1) # print warnings as they occur
@@ -297,8 +298,9 @@ abline(a=0, b=1, col="red")
 # Use depth_secondary to fill in gaps in depth_pref where possible
 depths$Depth <- ifelse( is.na(depths$Depth_m), depths$Depth2, depths$Depth_m )
 # Depth source
-depths$Depth_Source <- "Primary"
-depths$Depth_Source[depths$Depth_m == depths$Depth2] <- "Secondary"
+depths$Depth_Source <- paste0("Hypack_", depth_pref)
+depths$Depth_Source[depths$Depth_m == depths$Depth2] <- 
+  paste0("Hypack_", depth_secondary)
 table(depths$Depth_Source)
 # Subset
 depths <- depths[c("Datetime","Depth_m", "Depth_Source")]
