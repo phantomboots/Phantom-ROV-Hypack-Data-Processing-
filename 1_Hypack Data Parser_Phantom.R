@@ -571,7 +571,7 @@ extractPlannedLines <- function( hfile ){
   PlannedEnd <- as.numeric(strsplit(plines[2], " ")[[1]][-1])
   lname <- sub("LNN", "", hlines[grepl("LNN", hlines)])
   pldf <- data.frame(lname, t(PlannedStart), t(PlannedEnd), zone)
-  names(pldf) <- c("Line_Name", "Start_x", "Start_y", "End_x", "End_y", "Zone")
+  names(pldf) <- c("Name", "Start_x", "Start_y", "End_x", "End_y", "Zone")
   # Return
   return(pldf)
 }
@@ -613,7 +613,7 @@ for (z in unique(pl$Zone) ){
 # Replace NaN with NA
 pl[is.na(pl)] <- NA
 # Subset
-plannedTransects <- pl[c("Line_Name", "Start_Longitude", "Start_Latitude",
+plannedTransects <- pl[c("Name", "Start_Longitude", "Start_Latitude",
                          "End_Longitude","End_Latitude")]
 
 # Message

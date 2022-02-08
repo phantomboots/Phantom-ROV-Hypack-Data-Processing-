@@ -21,7 +21,10 @@
 #                                 CHANGE LOG                                   #
 ################################################################################
 #
-# Jan 2022: - 
+# Jan 2022: - Moved processing of hypack raw files for planned transects to #1
+#           - Wrote function for creating sp lines
+#           - Reduced the number of ind files by exporting all points together
+#           - Wrote function for spatial file export
 ################################################################################
 
 
@@ -93,10 +96,11 @@ for (i in 1:nrow(plannedTransects)) {
 # Create spatial lines data frame from list of lines
 Planned_Lines <- SpatialLinesDataFrame(
   SpatialLines(slines, proj4string = CRS("+proj=longlat +datum=WGS84")), 
-  plannedTransects, match.ID = FALSE)
+  plannedTransects[,"Name", drop=F], match.ID = FALSE)
 
 # Check
 plot(Planned_Lines)
+
 
 # Create sp lines from actual surveyed positions
 # Smoothed and unsmoothed for the ROV and ship
@@ -142,47 +146,48 @@ plot(Loess_Lines, add=T, col="green")
 
 
 
-# -- start here
-
-
 #===============================================================================
 # STEP 4 - CREATE A SPATIAL POINTS DATA FRAME 
 
-#Create a SpatialPointsDataFrame for each dive, and write to shape file. This will contain all collected data in the
-#attribute tables of the generated point file.
+# Create a SpatialPointsDataFrame for all transect data. This will contain all 
+# sensor data in the attribute table. Uses the LOESS smoothing coordinates
+Loess_Points <- fdat
+coordinates(Loess_Points) <- ~Beacon_Longitude_smoothed_loess + 
+                              Beacon_Latitude_smoothed_loess
+proj4string(Loess_Points) <- CRS("+proj=longlat +datum=WGS84")
 
-for(k in unique(Dives))
-{
-  name <- get(k)
-  title <- gsub(".csv","",k)
-  coords <- name[,c(5,4)]  #The Long and lat generated from the LOESS smoothing.
-  data <- name[,c(1:3,6:38)]
-  crs <- CRS("+proj=longlat +datum=WGS84")
-  spdf <- SpatialPointsDataFrame(coords = coords, data = data, proj4string = crs)
-  writeOGR(spdf, dsn= SHP_path, layer= paste0(title,"_Points"), driver="ESRI Shapefile", overwrite_layer = T)
-}
+# Check
+plot(Loess_Points)
+
 
 
 #===============================================================================
 # STEP 5 - CREAT LINE FILES AS KML AND SHAPE FILES
 
-#Write a .KML file for the lines of interpolated beacon data, the smoothed beacon data, and the ship GPS track,and
-#the planned survey lines.
+# Export spatial layers function
+exportSpatial <- function( layer, name, driver ){
+  if( driver == "KML"){
+    writeOGR(layer, file.path(KML_path, paste0(name,".kml")), layer="Name", 
+             driver=driver, overwrite_layer = TRUE)
+  } else if (driver == "ESRI Shapefile"){
+    writeOGR(layer, dsn= SHP_path, layer=name, driver=driver, 
+             overwrite_layer = TRUE)
+  }
+}
 
-setwd(KML_path)
-writeOGR(smooth, "Phantom Smoothed Position.kml", layer="Dive_Name", driver="KML", overwrite_layer = T)
-writeOGR(unsmooth, "Phantom Unsmoothed Position.kml", layer="Dive_Name", driver="KML", overwrite_layer = T)
-writeOGR(ship, paste0(ship_name,"_track.kml"), layer="Dive_Name", driver="KML", overwrite_layer = T)
-writeOGR(loess, "Phantom Loess Positions.kml", layer= "Dive_Name", driver="KML", overwrite_layer = T)
-writeOGR(planned, "Planned Lines.kml", layer= "Dive_Name", driver="KML", overwrite_layer = T)
+# Write KML files
+kdriver <- "KML"
+exportSpatial(Ship_Lines, paste0(ship_name,"_Track"), kdriver)
+exportSpatial(Interp_Lines, "ROV_Unsmoothed_Track", kdriver)
+exportSpatial(Smooth_Lines, "ROV_Smoothed_Track", kdriver)
+exportSpatial(Loess_Lines, "ROV_Loess_Track", kdriver)
+exportSpatial(Planned_Lines, "Planned_Transects", kdriver)
 
-#Write a .SHP file for the lines of interpolated beacon data, the smoothed beacon data, and the ship GPS track, and 
-#the planned survey lines.
-
-setwd(SHP_path)
-writeOGR(smooth, dsn= SHP_path, layer= "Phantom Smoothed Position", driver="ESRI Shapefile", overwrite_layer = T)
-writeOGR(unsmooth, dsn= SHP_path, layer= "Phantom Unsmoothed Position", driver="ESRI Shapefile", overwrite_layer = T)
-writeOGR(ship, dsn= SHP_path, layer= paste0(ship_name," Track"), driver="ESRI Shapefile", overwrite_layer = T)
-writeOGR(loess, dsn= SHP_path, layer= "Phantom Loess Position", driver="ESRI Shapefile", overwrite_layer = T)
-writeOGR(planned, dsn= SHP_path, layer= "Planned Lines", driver="ESRI Shapefile", overwrite_layer = T)
-
+# Write shapefiles
+edriver <- "ESRI Shapefile"
+exportSpatial(Ship_Lines, paste0(ship_name,"_Track"), edriver)
+exportSpatial(Interp_Lines, "ROV_Unsmoothed_Track", edriver)
+exportSpatial(Smooth_Lines, "ROV_Smoothed_Track", edriver)
+exportSpatial(Loess_Lines, "ROV_Loess_Track", edriver)
+exportSpatial(Planned_Lines, "Planned_Transects", edriver)
+exportSpatial(Loess_Points, "ROV_Loess_Points", edriver)
