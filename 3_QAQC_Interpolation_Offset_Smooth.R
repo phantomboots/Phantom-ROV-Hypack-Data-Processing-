@@ -61,13 +61,14 @@
 #             confirm it is working as intended
 #           - Using distGeo instead of distm function for step 7
 #           - Only removing upper qauntile outliers (not lower)
-#           - Rounding to 6 decimal places
 #           - added log file
 #           - saves transect maps to file comparing rov and ship positions
 #           - exports all transects and each transect NAV files to csv
 #           - removed ship_name as it wasn't used
 #           - added original script 4 to this script to reduce # of steps
 #           - uses RBR CTD data from excel files first, then ASDL backup second
+#           - moved longlat rounding to script 3
+#           - renamed some attributes
 ################################################################################
 
 
@@ -124,7 +125,7 @@ GPS_abeam <- -4.1
 GPS_along <- -12.57
 
 # Set the value to use for the 'window' size (in seconds) of the running median 
-# smoothing of the beacon position.
+# smoothing of the beacon position. Must be odd number!
 smooth_window <- 31
 
 # Set the LOESS span values. This is a parameter that described the proportion 
@@ -421,7 +422,8 @@ interpGaps <- function( dat, variable ){
     # For altitude and slant range over fill 1 row gaps
     if( grepl("altitude|slant", variable, ignore.case = T) ){
       # Interpolate, max gap = 1
-      dat[[variable]] <- na_interpolation(dat[[variable]], option = "linear", maxgap=1)
+      dat[[variable]] <- na_interpolation(dat[[variable]], 
+                                          option = "linear", maxgap=1)
     } else {
       # Interpolate, max gap = INF
       dat[[variable]] <- na_interpolation(dat[[variable]], option = "linear")
@@ -530,9 +532,9 @@ offsets <- destPoint(p=ondat[c("Beacon_Longitude",
                                "Beacon_Latitude")],
                      b=bearing, 
                      d=offset_dist)
-# Add new offset values to ondat
-ondat$Beacon_Longitude_offset <- offsets[,1]
-ondat$Beacon_Latitude_offset <- offsets[,2]
+# Add new offset long/lat to ondat
+ondat$ROV_Longitude <- offsets[,1]
+ondat$ROV_Latitude <- offsets[,2]
 
 
 
@@ -544,8 +546,7 @@ ondat$Beacon_Latitude_offset <- offsets[,2]
 # interpolated beacon position, and the Ship_GPS point for that same second
 crossdist <- geosphere::distGeo(
   as.matrix(ondat[c("Ship_Longitude","Ship_Latitude")]), 
-  as.matrix(ondat[c("Beacon_Longitude_offset",
-                    "Beacon_Latitude_offset")]))
+  as.matrix(ondat[c("ROV_Longitude","ROV_Latitude")]))
 # Check
 message("\nSummary of distance between ship and ROV position", "\n")
 print(summary(crossdist))
@@ -553,19 +554,20 @@ print(summary(crossdist))
 # Look for outliers (+/- 1.5*Interquartile range)
 outlier_limit <- median(crossdist) + (1.5*IQR(crossdist))
 # Remove distances greater than the max_dist and upper
-crossdist[crossdist > crossdist | crossdist > outlier_limit] <- NA
+crossdist[crossdist > max_dist | crossdist > outlier_limit] <- NA
 # Check
+message("\nOutliers greater than ", round(min(c(outlier_limit, max_dist)),1),
+        " m were removed")
 message("\nSummary of distance between ship and ROV position", 
         " after outliers removed", "\n")
 print(summary(crossdist))
 # Set long/lat values outside of range to NA
-ondat$Beacon_Longitude_offset[is.na(crossdist)] <- NA
-ondat$Beacon_Latitude_offset[is.na(crossdist)] <- NA
+ondat$ROV_Longitude[is.na(crossdist)] <- NA
+ondat$ROV_Latitude[is.na(crossdist)] <- NA
 
 # Re-interpolate Beacon long/lat values now that outliers have been removed
 # Variables to interpolate
-variables <- c("Beacon_Longitude_offset", 
-               "Beacon_Latitude_offset")
+variables <- c("ROV_Longitude", "ROV_Latitude")
 # Interpolate within each transect by variable
 for (v in variables){
   ondat <- ondat %>% group_by(Transect_Name) %>% 
@@ -578,29 +580,34 @@ for (v in variables){
 # STEP 9 - APPLY LOESS AND RUNNING MEDIAN SMOOTHING TO ROV POSITION DATA 
 
 # Smoothing function
-# Rounds the values of the smoothed data to 6 decimal places
+# Round values to the 5th decimal, equivalent to ~ 1m precision
 smoothCoords <- function( dat, variable ){
-  # base variable name
-  basename <- sub("_offset.*","", variable)
   # loess smooth
-  lname <- paste(basename, "smoothed_loess", sep="_")
+  lname <- paste(variable, "loess", sep="_")
   dat[[lname]] <- round(loess(dat[[variable]] ~ as.numeric(dat$Datetime), 
-                        span = loess_span)$fitted, 6)
+                        span = loess_span)$fitted, 5)
   # window smooth
-  sname <- paste(basename, "smoothed_window", sep="_")
-  dat[[sname]] <- round(runmed(dat[[variable]], smooth_window), 6)
+  sname <- paste(variable, "smoothed", sep="_")
+  dat[[sname]] <- round(runmed(dat[[variable]], smooth_window), 5)
   # Return
   return(dat)
 }
 
 # Variables to smooth
-variables <- c("Beacon_Longitude_offset", 
-               "Beacon_Latitude_offset")
+variables <- c("ROV_Longitude", "ROV_Latitude")
 # Smooth using loess and window method within each transect by variable
 for (v in variables){
   ondat <- ondat %>% group_by(Transect_Name) %>% 
     group_modify(~smoothCoords(.x, variable={{v}})) %>% as.data.frame()
 }
+
+# Round unsmoothed to 5 decimals places
+ondat[variables] <- round(ondat[variables], 5)
+# Rename unsmoothed long/lat
+names(ondat)[names(ondat) %in% variables] <- c("ROV_Longitude_unsmoothed", 
+                                               "ROV_Latitude_unsmoothed")
+# Rename beacon source
+names(ondat)[names(ondat) == "Beacon_Source"] <- "ROV_Source"
 
 # Check
 # Map each transect
@@ -613,14 +620,14 @@ for (i in unique(ondat$Transect_Name)){
        xlab = "Longitude", ylab="Latitude")
   points(tmp$Beacon_Longitude,tmp$Beacon_Latitude, 
          pch=16, cex=.5, col="#0072B2")
-  points(tmp$Beacon_Longitude_offset,
-         tmp$Beacon_Latitude_offset, pch=16, cex=.5, col="#D55E00")
-  points(tmp$Beacon_Longitude_smoothed_window,
-         tmp$Beacon_Latitude_smoothed_window, pch=16, cex=.5, col="grey20")
-  points(tmp$Beacon_Longitude_smoothed_loess,
-         tmp$Beacon_Latitude_smoothed_loess, pch=16, cex=.5, col="grey50")
+  points(tmp$ROV_Longitude_unsmoothed, tmp$ROV_Latitude_unsmoothed, 
+         pch=16, cex=.5, col="#D55E00")
+  points(tmp$ROV_Longitude_smoothed, tmp$ROV_Latitude_smoothed, 
+         pch=16, cex=.4, col="grey20")
+  points(tmp$ROV_Longitude_loess, tmp$ROV_Latitude_loess, 
+         pch=16, cex=.4, col="grey50")
   legend("bottom", horiz=T, bty = "n",
-         legend = c("Ship", "ROV OG", "ROV offset", "ROV window", "ROV loess"),
+         legend = c("Ship", "ROV OG", "ROV unsmooth", "ROV smooth", "ROV loess"),
          col = c("#009E73","#0072B2","#D55E00","grey20","grey50"), pch=16)
   dev.off()
 }
@@ -632,13 +639,13 @@ for (i in unique(ondat$Transect_Name)){
 
 
 # Fields to include in final processed files
-flds <- c("Datetime","Transect_Name", "Dive_Phase", 
-          "Beacon_Longitude_smoothed_window", "Beacon_Latitude_smoothed_window",
-          "Beacon_Longitude_smoothed_loess", "Beacon_Latitude_smoothed_loess",
-          "Beacon_Longitude_offset", "Beacon_Latitude_offset", "Beacon_Source", 
-          "Ship_Longitude", "Ship_Latitude", "Depth_m", "Depth_Source",
-          "ROV_heading", "Ship_heading", "Speed_kts", "Altitude_m", 
-          "Slant_range_m", "Rogue_roll", "Rogue_pitch", "MiniZeus_zoom_percent",
+flds <- c("Datetime","Transect_Name", "Dive_Phase", "ROV_Longitude_loess", 
+          "ROV_Latitude_loess", "ROV_Longitude_smoothed", 
+          "ROV_Latitude_smoothed", "ROV_Longitude_unsmoothed", 
+          "ROV_Latitude_unsmoothed", "ROV_Source", "Ship_Longitude", 
+          "Ship_Latitude", "Depth_m", "Depth_Source", "ROV_heading", 
+          "Ship_heading", "Speed_kts", "Altitude_m", "Slant_range_m", 
+          "Rogue_roll", "Rogue_pitch", "MiniZeus_zoom_percent",
           "MiniZeus_focus_percent", "MiniZeus_aperture_percent", 
           "MiniZeus_pitch", "MiniZeus_roll", "ROV_pitch", "ROV_roll")
 

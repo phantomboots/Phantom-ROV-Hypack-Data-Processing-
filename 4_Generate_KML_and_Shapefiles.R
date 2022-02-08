@@ -127,20 +127,20 @@ Ship_Lines <- createLines(dat=fdat,
                             x="Ship_Longitude",
                             y="Ship_Latitude")
 # Create ROV lines
-Interp_Lines <- createLines(dat=fdat,
-                            x="Beacon_Longitude_offset",
-                            y="Beacon_Latitude_offset")
+Unsmoothed_Lines <- createLines(dat=fdat,
+                                x="ROV_Longitude_unsmoothed",
+                                y="ROV_Latitude_unsmoothed")
 # Create smoothed ROV lines
 Smooth_Lines <- createLines(dat=fdat,
-                            x="Beacon_Longitude_smoothed_window",
-                            y="Beacon_Latitude_smoothed_window")
+                            x="ROV_Longitude_smoothed",
+                            y="ROV_Latitude_smoothed")
 # Create loess ROV lines
 Loess_Lines <- createLines(dat=fdat,
-                            x="Beacon_Longitude_smoothed_loess",
-                            y="Beacon_Latitude_smoothed_loess")
+                            x="ROV_Longitude_loess",
+                            y="ROV_Latitude_loess")
 # Check
 plot(Ship_Lines)
-plot(Interp_Lines, add=T, col="red")
+plot(Unsmoothed_Lines, add=T, col="red")
 plot(Smooth_Lines, add=T, col="blue")
 plot(Loess_Lines, add=T, col="green")
 
@@ -151,10 +151,13 @@ plot(Loess_Lines, add=T, col="green")
 
 # Create a SpatialPointsDataFrame for all transect data. This will contain all 
 # sensor data in the attribute table. Uses the LOESS smoothing coordinates
-Loess_Points <- fdat
-coordinates(Loess_Points) <- ~Beacon_Longitude_smoothed_loess + 
-                              Beacon_Latitude_smoothed_loess
-proj4string(Loess_Points) <- CRS("+proj=longlat +datum=WGS84")
+Loess_Points <- SpatialPointsDataFrame(
+  coords= fdat[c("ROV_Longitude_loess","ROV_Latitude_loess")],
+  data=fdat, proj4string = CRS("+proj=longlat +datum=WGS84"), match.ID=FALSE)
+
+# Shorten names for shapefile
+names(Loess_Points) <- sub("Latitude", "y", names(Loess_Points))
+names(Loess_Points) <- sub("Longitude", "x", names(Loess_Points))
 
 # Check
 plot(Loess_Points)
@@ -162,7 +165,7 @@ plot(Loess_Points)
 
 
 #===============================================================================
-# STEP 5 - CREAT LINE FILES AS KML AND SHAPE FILES
+# STEP 5 - EXPORT FILES AS KML AND SHAPEFILES
 
 # Export spatial layers function
 exportSpatial <- function( layer, name, driver ){
@@ -178,7 +181,7 @@ exportSpatial <- function( layer, name, driver ){
 # Write KML files
 kdriver <- "KML"
 exportSpatial(Ship_Lines, paste0(ship_name,"_Track"), kdriver)
-exportSpatial(Interp_Lines, "ROV_Unsmoothed_Track", kdriver)
+exportSpatial(Unsmoothed_Lines, "ROV_Unsmoothed_Track", kdriver)
 exportSpatial(Smooth_Lines, "ROV_Smoothed_Track", kdriver)
 exportSpatial(Loess_Lines, "ROV_Loess_Track", kdriver)
 exportSpatial(Planned_Lines, "Planned_Transects", kdriver)
@@ -186,7 +189,7 @@ exportSpatial(Planned_Lines, "Planned_Transects", kdriver)
 # Write shapefiles
 edriver <- "ESRI Shapefile"
 exportSpatial(Ship_Lines, paste0(ship_name,"_Track"), edriver)
-exportSpatial(Interp_Lines, "ROV_Unsmoothed_Track", edriver)
+exportSpatial(Unsmoothed_Lines, "ROV_Unsmoothed_Track", edriver)
 exportSpatial(Smooth_Lines, "ROV_Smoothed_Track", edriver)
 exportSpatial(Loess_Lines, "ROV_Loess_Track", edriver)
 exportSpatial(Planned_Lines, "Planned_Transects", edriver)

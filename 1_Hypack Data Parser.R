@@ -414,11 +414,10 @@ for (z in unique(positions$Zone) ){
   pb <- terra::project(vb, "+proj=longlat +datum=WGS84")
   ps <- terra::project(vs, "+proj=longlat +datum=WGS84")
   # Replace with lon and lat values for zone == z rows
-  # Round values to the 5th decimal, equivalent to ~ 1m precision
-  positions[positions$Zone == z,"Beacon_Longitude"] <- round(geom(pb)[, "x"],5)
-  positions[positions$Zone == z,"Beacon_Latitude"] <- round(geom(pb)[, "y"],5)
-  positions[positions$Zone == z,"Ship_Longitude"] <- round(geom(ps)[, "x"],5)
-  positions[positions$Zone == z,"Ship_Latitude"] <- round(geom(ps)[, "y"],5)
+  positions[positions$Zone == z,"Beacon_Longitude"] <- geom(pb)[, "x"]
+  positions[positions$Zone == z,"Beacon_Latitude"] <- geom(pb)[, "y"]
+  positions[positions$Zone == z,"Ship_Longitude"] <- geom(ps)[, "x"]
+  positions[positions$Zone == z,"Ship_Latitude"] <- geom(ps)[, "y"]
 }
 # Replace NaN with NA
 positions[is.na(positions)] <- NA
@@ -605,11 +604,10 @@ for (z in unique(pl$Zone) ){
   sll <- terra::project(sv, "+proj=longlat +datum=WGS84")
   ell <- terra::project(ev, "+proj=longlat +datum=WGS84")
   # Replace with lon and lat values for zone == z rows
-  # Round values to the 5th decimal, equivalent to ~ 1m precision
-  pl[pl$Zone == z,"Start_Longitude"] <- round(geom(sll)[, "x"],5)
-  pl[pl$Zone == z,"Start_Latitude"] <- round(geom(sll)[, "y"],5)
-  pl[pl$Zone == z,"End_Longitude"] <- round(geom(ell)[, "x"],5)
-  pl[pl$Zone == z,"End_Latitude"] <- round(geom(ell)[, "y"],5)
+  pl[pl$Zone == z,"Start_Longitude"] <- geom(sll)[, "x"]
+  pl[pl$Zone == z,"Start_Latitude"] <- geom(sll)[, "y"]
+  pl[pl$Zone == z,"End_Longitude"] <- geom(ell)[, "x"]
+  pl[pl$Zone == z,"End_Latitude"] <- geom(ell)[, "y"]
 }
 # Replace NaN with NA
 pl[is.na(pl)] <- NA
