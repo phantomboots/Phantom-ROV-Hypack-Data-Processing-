@@ -96,6 +96,7 @@ padtime <- 2
 # Should hypack sensor data be clipped to on-transect times only?
 # TRUE for on-transect only
 # FALSE for exporting additional off-transect sensor data too
+# Question: How to incorporate this into later processing code?
 onlyTransect <- TRUE
 
 
@@ -583,7 +584,7 @@ pl <- do.call("rbind", pl_list)
 # Remove any duplicates
 pl <- pl[!duplicated(pl),]
 #Remove any lines that NA values for their names
-pl <- pl[!is.na(pl$Line_Name),]
+pl <- pl[!is.na(pl$Name),]
 
 # Convert UTM to lat/lon
 # Empty lon and lat columns to fill

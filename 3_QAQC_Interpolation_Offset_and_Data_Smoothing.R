@@ -192,7 +192,7 @@ ROV_MiniZeus_IMUS_Master$Datetime <- ymd_hms(ROV_MiniZeus_IMUS_Master$Datetime)
 # Create blank data frame to fill in the loop below.
 RBR_Data <- data.frame()
 # Read in all RBR .xlsx files in the directory, merge into one larger dataframe
-RBR_files <- list.files(path=RBR_input, pattern = ".xlsx", full.names = T)
+RBR_files <- list.files(path=RBR_path, pattern = ".xlsx", full.names = T)
 for(i in RBR_files){
   # High max guess range, sometimes there are many rows missing at beginning
   tmp <- read_xlsx(i, sheet = "Data", skip = 1, guess_max = 10000)
@@ -457,7 +457,7 @@ ondat$Slant_range_m[ondat$Slant_range_m > 10] <- NA
 # Add "interp" label to beacon source
 ondat$Beacon_Source[is.na(ondat$Beacon_Source)] <- "Interpolation"
 # Check
-message("\nBeacon position sources:", "\n")
+message("\nBeacon position sources:")
 print(table(ondat$Beacon_Source))
 
 

@@ -1,5 +1,5 @@
 #===============================================================================
-# Script Name: 4b_Generate_KML_and_Shapefiles_Phantom.R
+# Script Name: 4_Generate_KML_and_Shapefiles_Phantom.R
 # Script Function: This script reads in the .CSV files created from 
 #                 "3_QAQC_Interpolation_Offset_and_Data_Smoothing.R". Creates 
 #                 Hypack Planned lines, GPS tracks, and unsmoothed/smoothed 

@@ -270,8 +270,8 @@ if( length(Tritech_files) > 0 ){
   names(Tritech_all) <- c("Datetime","Slant_range_m")
   # Set values of 9.99 or 0 or less (out of range values) to NA
   # Question: Can slant range be less than zero?
-  Tritech_all$slant_range_m[Tritech_all$slant_range_m <= 0] <- NA
-  Tritech_all$slant_range_m[Tritech_all$slant_range_m == 9.99] <- NA
+  Tritech_all$Slant_range_m[Tritech_all$Slant_range_m <= 0] <- NA
+  Tritech_all$Slant_range_m[Tritech_all$Slant_range_m >= 9.99] <- NA
   # Summary
   print(summary(Tritech_all))
   # Write
@@ -414,15 +414,14 @@ if( length(DVL_files) > 0 ){
   DVL_all[,paste0("X", 5:9)] <- DVL_all[,paste0("X", 5:9)] / 1000
   # Set zeros and negative values to NA
   DVL_all[,-1] <- apply(DVL_all[,-1], 2, function(x) ifelse(x <= 0, NA, x))
+  # Rename
+  names(DVL_all) <- c("Datetime","Bottom_X_Velocity_ms","Bottom_Y_Velocity_ms",
+                      "Bottom_Z_Velocity_ms","Bottom_3D_Velocity_ms","Altitude_m")
   # Calculate speed in knots
   # Question: Are these the correct velocity components?
   DVL_all$Speed_kts <- sqrt((DVL_all$Bottom_X_Velocity_ms)^2 + 
-                                  (DVL_all$Bottom_Y_Velocity_ms)^2)
+                              (DVL_all$Bottom_Y_Velocity_ms)^2)
   DVL_all$Speed_kts <- DVL_all$Speed_kts * 1.94384 # m/s to knots
-  # Rename
-  names(DVL_all) <- c("Datetime","Bottom_X_Velocity_ms","Bottom_Y_Velocity_ms",
-                      "Bottom_Z_Velocity_ms","Bottom_3D_Velocity_ms",
-                      "Altitude_m","Speed_kts")
   # Summary
   print(summary(DVL_all))
   # Check for high speeds
