@@ -188,8 +188,7 @@ cat("depth_secondary = '", depth_secondary, "'\n\n", sep="")
 # STEP 4 - READ IN RAW DATA
 
 # Lists Hypack files, apply function to extract data on list of files, combine
-# extracted data into a single dataframe for entire cruise.
-
+# extracted data into a single dataframe for entire cruise
 
 # Function to extract data from hypack file
 extractHypack <- function( hfile ){
@@ -542,8 +541,88 @@ sdat <- Reduce(function(x, y) merge(x, y, by="Datetime", all=TRUE),
 sdat <- sdat[order(sdat$Datetime),]
 
 
+
 #===============================================================================
-# STEP 6 - READ IN DIVE LOG AND MERGE WITH SENSOR DATA
+# STEP 6 - EXTRACT PLANNED LINES FROM RAW HYPACK FILES
+
+# Planned line file coordinates are logged in each Hypack .RAW file, and have 
+# the line designations 'PTS' and 'LNN'. The exact line number will vary 
+# depending on how many devices are present in the Hypack Hardware file.
+
+# Function to extract planned lines data from hypack file
+extractPlannedLines <- function( hfile ){
+  # Read in lines from hypack files
+  hlines <- readLines(hfile)
+  # Extract UTM Zone
+  # From the 3rd column of line 5
+  longitude <- hlines[5] %>% strsplit(., " ") %>% 
+    unlist() %>% .[3] %>% as.numeric()
+  # Get UTM zone based on longitude
+  zone <- NA
+  zone[longitude == -123] <- 10
+  zone[longitude == -129] <- 9
+  zone[longitude == -135] <- 8
+  # Check
+  if(is.na(zone)) warning("Longitude does not match UTM zone 8, 9  or 10", 
+                          call.= FALSE)
+  # Extract planned lines info
+  plines <- hlines[grepl("PTS", hlines)]
+  PlannedStart <- as.numeric(strsplit(plines[1], " ")[[1]][-1])
+  PlannedEnd <- as.numeric(strsplit(plines[2], " ")[[1]][-1])
+  lname <- sub("LNN", "", hlines[grepl("LNN", hlines)])
+  pldf <- data.frame(lname, t(PlannedStart), t(PlannedEnd), zone)
+  names(pldf) <- c("Line_Name", "Start_x", "Start_y", "End_x", "End_y", "Zone")
+  # Return
+  return(pldf)
+}
+
+# Apply function across list of input files
+pl_list <- future_lapply(hypack_files, FUN=extractPlannedLines, future.seed=42)
+pl <- do.call("rbind", pl_list)
+
+# Remove any duplicates
+pl <- pl[!duplicated(pl),]
+#Remove any lines that NA values for their names
+pl <- pl[!is.na(pl$Line_Name),]
+
+# Convert UTM to lat/lon
+# Empty lon and lat columns to fill
+pl$Start_Longitude <- NA
+pl$Start_Latitude <- NA
+pl$End_Longitude <- NA
+pl$End_Latitude <- NA
+# Loop through UTM zones
+for (z in unique(pl$Zone) ){
+  # Subset by zone
+  tmp <- filter(pl, Zone == z)
+  # Convert to vector layer
+  sv <- terra::vect(tmp, geom=c("Start_x", "Start_y"),
+                    crs=paste0("+proj=utm +zone=", z," +datum=WGS84 +units=m"))
+  ev <- terra::vect(tmp, geom=c("End_x", "End_y"),
+                    crs=paste0("+proj=utm +zone=", z," +datum=WGS84 +units=m"))
+  # Project to lat/lon
+  sll <- terra::project(sv, "+proj=longlat +datum=WGS84")
+  ell <- terra::project(ev, "+proj=longlat +datum=WGS84")
+  # Replace with lon and lat values for zone == z rows
+  # Round values to the 5th decimal, equivalent to ~ 1m precision
+  pl[pl$Zone == z,"Start_Longitude"] <- round(geom(sll)[, "x"],5)
+  pl[pl$Zone == z,"Start_Latitude"] <- round(geom(sll)[, "y"],5)
+  pl[pl$Zone == z,"End_Longitude"] <- round(geom(ell)[, "x"],5)
+  pl[pl$Zone == z,"End_Latitude"] <- round(geom(ell)[, "y"],5)
+}
+# Replace NaN with NA
+pl[is.na(pl)] <- NA
+# Subset
+plannedTransects <- pl[c("Line_Name", "Start_Longitude", "Start_Latitude",
+                         "End_Longitude","End_Latitude")]
+
+# Message
+message( "\n", nrow(pl), " planned transects found in Hypack for ", 
+         project_folder, "\n")
+
+
+#===============================================================================
+# STEP 7 - READ IN DIVE LOG AND MERGE WITH SENSOR DATA
 
 # Read in the start and end time from the Dive Log
 dlog <- read.csv(divelog_path)
@@ -630,7 +709,11 @@ print(summary(ondat))
 
 
 #===============================================================================
-# STEP 7 - EXPORT DATA
+# STEP 8 - EXPORT DATA
+
+# Planned transects
+# Save as RData for use in later processing scripts
+save(plannedTransects, file=file.path(save_dir,"Hypack_PlannedTransects.RData"))
 
 # Transects only
 # Save as RData for use in later processing scripts
