@@ -99,6 +99,10 @@ padtime <- 2
 # Question: How to incorporate this into later processing code?
 onlyTransect <- TRUE
 
+# Should the secondary depth source be converted to meters?
+# Multiply by 3.28084
+convert_depth <- FALSE
+
 
 #===============================================================================
 # STEP 1 - SET PATHS AND MAKE EXPORT DIRECTORY
@@ -109,7 +113,7 @@ onlyTransect <- TRUE
 wdir <- getwd() 
 
 # Enter Project folder
-project_folder <- "Pac2021-054_phantom"
+project_folder <- "Pac2019-015_phantom"
 
 # Directory where Hypack .RAW files are stored
 hypack_path <- file.path(wdir, project_folder, "Data/Raw")
@@ -132,22 +136,24 @@ device_types <- c("POS","EC1","HCP","GYR","DFT")
 # Set column names for position, depth, heading, draft and heave data sources. 
 # Must match the names as listed in hardware devices. If a device is not present, 
 # write NULL. MAKE SURE DEVICE NAMES MATCH .RAW FILES 
-ship_heading_pref <- "Hemisphere_GPS" # DEV 0 
-GPS_pref <- "Hemisphere_GPS" # DEV 0
-depth_pref <- "RBR_CTD_Depth" # DEV 2
-pos_pref <- "USBL_4370_Wide" # DEV 4
-phantom_heading_pref <- "ROV_Heading_Depth_UTurns" # Dev 5
+ship_heading_pref <- "Hemisphere" # DEV 3 
+GPS_pref <- "Hemisphere" # DEV 3
+depth_pref <- "RBR" # DEV 10
+pos_pref <- "USBL_Model" # DEV 4
+phantom_heading_pref <- "OSD_Heading_Depth_Capture" # Dev 2
 speed_pref <- "ROWETech_DVL" # Dev 6
 altitude_pref <- "ROWETech_DVL" # Dev 6
-slant_pref <- "Tritech_Slant_Range" # Dev 8
-rogue_cam_pref <- "MiniZeus_ROV_IMU_Pitch_Roll" # Dev 10
+slant_pref <- "MiniZeus_Range_Tritech" # Dev 8
+rogue_cam_pref <- "Cyclops_Tilt" # Dev 1
 
 # Set names for secondary hardware devices, for cases were primary device may 
 # be malfunctioning, NULL if there is no secondary
-pos_secondary <- "USBL_1000-21884" # Dev 7 "USBL_300-564"
-depth_secondary <- "ROV_Heading_Depth_UTurns" # Dev 5
+pos_secondary <- "USBL_ROV1_300" # Dev 5
+depth_secondary <- NULL #"OSD_Heading_Depth_Capture" # Dev 2
 
 
+## -- notes - need to look into another secondary position source, lots of 
+# gap filling with ship pos which isn't ideal
 
 #===============================================================================
 # STEP 3 - START LOG FILE
@@ -201,8 +207,8 @@ extractHypack <- function( hfile ){
   # Extract device info 
   # Question: Could grep OFF offset info as well, could that be important?
   dev <- hlines[grepl("DEV", hlines)]
-  dev <- gsub("\"", "", dev) %>% strsplit(., " ") %>% 
-    do.call(rbind, .) %>% as.data.frame()
+  dev <- gsub("\"", "", dev) %>% strsplit(., " ") %>% map(., ~ c(V=.)) %>% 
+    bind_rows(.) %>% as.data.frame()
   # Only need columns 2 and 4
   dev <- dev[,c("V2","V4")] 
   # Extract UTM Zone
@@ -228,13 +234,16 @@ extractHypack <- function( hfile ){
   # Only include lines with device_types set in STEP 2
   ds_lines <- ds_lines[grepl(paste0(device_types, collapse = "|"), ds_lines)]
   # rbind lines together in dataframe, fills in blanks with NA
-  ds_list <-  ds_lines %>% strsplit(., " ") 
-  ds <- map(ds_list, ~ c(X=.)) %>% bind_rows(.) %>% as.data.frame()
-  # Format columns
-  ds$X3 <- as.integer(ds$X3)
-  ds$X4 <- as.numeric(ds$X4) 
-  ds$X5 <- as.numeric(ds$X5)
-  ds$X6 <- as.numeric(ds$X6)
+  ds <- ds_lines %>% strsplit(., " ") %>% map(., ~ c(X=.)) %>% 
+    bind_rows(.) %>% as.data.frame()
+  # Set all columns except X1 and X2 as numeric
+  if( ncol(ds) > 3 ){
+    ds[,-c(1:2)] <- apply(ds[,-c(1:2)], 2, as.numeric)
+  } else if (ncol(ds) == 3) {
+    ds[,3] <- as.numeric(ds[,3])
+  } else {
+    stop("Too few columns in RAW file ", hfile, call.=F)
+  }
   # Add datetime field
   # Date formated as m/d/y in raw files
   ds$Datetime <- ymd_hms(mdy(day) + seconds(ds$X3))
@@ -265,7 +274,9 @@ dat <- do.call("rbind", all_list)
 
 # Split sensor data into individual dataframes, process, then merge together, so
 # there is a field for each data type (e.g. depth, heading, etc.) in the final
-# data frame.
+# data frame. Probably don't want to replace beacon with ship at this point,
+# maybe later in #3 if needed. Or if there if there are no positions for a transect.
+# Double check what was done in original code.
 
 
 #=============#
@@ -287,9 +298,9 @@ depths <- merge(depth_data, depth_data2, by="Datetime", all=T)
 # Assign NA to all negative values
 depths$Depth_m[ depths$Depth_m < 0 ] <- NA
 depths$Depth2[ depths$Depth2 < 0 ] <- NA
-# Convert Depth 2 from feet to meters
+# Convert Depth to meters
 # Question: This was not done in previous version, should depth_secondary be in meters? 
-depths$Depth2 <- depths$Depth2 * 3.28084
+if( convert_depth ) depths$Depth2 <- depths$Depth2 * 3.28084
 # Remove duplicated
 depths <- depths[!duplicated(depths$Datetime),]
 # Plot, look for tight relationship between depth sensors
@@ -351,7 +362,7 @@ positions <- positions[order(positions$Datetime),]
 plot(positions$Beacon_Easting, positions$Beacon_Easting2)
 abline(a=0, b=1, col="red")
 # Primary v ship
-plot(positions$Beacon_Easting, positions$Ship_Easting, asp=1)
+plot(positions$Beacon_Easting, positions$Ship_Easting)
 abline(a=0, b=1, col="red")
 
 # Check for NA in first Beacon_Easting (a gap at the start in the primary)
@@ -394,7 +405,7 @@ positions$Beacon_Source[positions$Beacon_Easting ==
                          positions$Beacon_Easting2] <- "Secondary"
 positions$Beacon_Source[positions$Beacon_Easting == 
                          positions$Ship_Easting] <- "Ship"
-
+table(positions$Beacon_Source)
 # Convert UTM to lat/lon
 # Empty lon and lat columns to fill
 positions$Beacon_Longitude <- NA

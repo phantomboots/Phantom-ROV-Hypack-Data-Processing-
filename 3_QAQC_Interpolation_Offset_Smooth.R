@@ -67,7 +67,7 @@
 #           - removed ship_name as it wasn't used
 #           - added original script 4 to this script to reduce # of steps
 #           - uses RBR CTD data from excel files first, then ASDL backup second
-#           - moved longlat rounding to script 3
+#           - longlat rounded to 6th decimal place
 #           - renamed some attributes
 ################################################################################
 
@@ -580,15 +580,15 @@ for (v in variables){
 # STEP 9 - APPLY LOESS AND RUNNING MEDIAN SMOOTHING TO ROV POSITION DATA 
 
 # Smoothing function
-# Round values to the 5th decimal, equivalent to ~ 1m precision
+# Round values to the 6th decimal
 smoothCoords <- function( dat, variable ){
   # loess smooth
   lname <- paste(variable, "loess", sep="_")
   dat[[lname]] <- round(loess(dat[[variable]] ~ as.numeric(dat$Datetime), 
-                        span = loess_span)$fitted, 5)
+                        span = loess_span)$fitted, 6)
   # window smooth
   sname <- paste(variable, "smoothed", sep="_")
-  dat[[sname]] <- round(runmed(dat[[variable]], smooth_window), 5)
+  dat[[sname]] <- round(runmed(dat[[variable]], smooth_window), 6)
   # Return
   return(dat)
 }
@@ -601,8 +601,8 @@ for (v in variables){
     group_modify(~smoothCoords(.x, variable={{v}})) %>% as.data.frame()
 }
 
-# Round unsmoothed to 5 decimals places
-ondat[variables] <- round(ondat[variables], 5)
+# Round unsmoothed to 6 decimals places
+ondat[variables] <- round(ondat[variables], 6)
 # Rename unsmoothed long/lat
 names(ondat)[names(ondat) %in% variables] <- c("ROV_Longitude_unsmoothed", 
                                                "ROV_Latitude_unsmoothed")
@@ -645,9 +645,13 @@ flds <- c("Datetime","Transect_Name", "Dive_Phase", "ROV_Longitude_loess",
           "ROV_Latitude_unsmoothed", "ROV_Source", "Ship_Longitude", 
           "Ship_Latitude", "Depth_m", "Depth_Source", "ROV_heading", 
           "Ship_heading", "Speed_kts", "Altitude_m", "Slant_range_m", 
-          "Rogue_roll", "Rogue_pitch", "MiniZeus_zoom_percent",
+          "Rogue_pitch", "Rogue_roll", "MiniZeus_zoom_percent",
           "MiniZeus_focus_percent", "MiniZeus_aperture_percent", 
-          "MiniZeus_pitch", "MiniZeus_roll", "ROV_pitch", "ROV_roll")
+          "MiniZeus_pitch", "MiniZeus_roll", "ROV_pitch", "ROV_roll",
+          "Conductivity_mS_cm", "Temperature_C", "Pressure_dbar", 
+          "DO_Sat_percent", "Sea_Pressure_dbar", "Salinity_PSU", 
+          "Sound_Speed_m_s", "Specific_Cond_uS_cm", "Density_kg_m3", 
+          "DO_conc_mgL")
 
 # Final dataset
 fdat <- ondat[flds]
