@@ -13,9 +13,9 @@
 #           Bandwidth is set in the 'EDIT THESE DATA' portion of these scripts. 
 #           Final data for each dive are written to .CSV.
 #
-# Script Author: Ben Snow
-# Script Date: Sep 9, 2019
-# R Version: 3.5.1
+# Script Author: Ben Snow, adapted by Jessica Nephin
+# Script Date: Sep 9, 2019 adapted in Feb 2022
+# R Version: 3.5.1, version 4.0.2
 
 
 ################################################################################
@@ -69,6 +69,9 @@
 #           - uses RBR CTD data from excel files first, then ASDL backup second
 #           - longlat rounded to 6th decimal place
 #           - renamed some attributes
+#           - doesn't use ship pos to fill gaps in beacon
+#           - added along track offset filter for points greater than 50 m away
+#           - outlier cutoff too sensitive, changed to 2.5 IQR
 ################################################################################
 
 
@@ -98,7 +101,7 @@ options(digits = 12)
 wdir <- getwd() 
 
 # Project folder
-project_folder <- "Pac2021-054_phantom"
+project_folder <- "Pac2019-015_phantom"
 
 # Directory where Hypack processed data are stored
 hypack_path <- file.path(wdir, project_folder, "Data/1.Hypack_Processed_Data")
@@ -107,8 +110,7 @@ hypack_path <- file.path(wdir, project_folder, "Data/1.Hypack_Processed_Data")
 RBR_path <- file.path(wdir, project_folder, "Data/RBR_CTD_Data")
 
 # Directory with ASDL master files
-ASDL_path <- file.path(wdir, project_folder, 
-                       "Data/2.ASDL_Processed_Data")
+ASDL_path <- file.path(wdir, project_folder, "Data/2.ASDL_Processed_Data")
 
 # Export directories 
 final_dir <- file.path(wdir, project_folder, "Data/3.Final_Processed_Data")
@@ -138,6 +140,21 @@ loess_span = 0.05
 # Question - what is this distance for phantom (100m) and boots (1000m)?
 max_dist <- 100
 
+
+# Fields to include in final processed files
+# "MiniZeus_pitch","MiniZeus_roll","ROV_pitch","ROV_roll" 
+flds <- c("Datetime","Transect_Name", "Dive_Phase", "ROV_Longitude_loess", 
+          "ROV_Latitude_loess", "ROV_Longitude_smoothed", 
+          "ROV_Latitude_smoothed", "ROV_Longitude_unsmoothed", 
+          "ROV_Latitude_unsmoothed", "ROV_Source", "Ship_Longitude", 
+          "Ship_Latitude", "Depth_m", "Depth_Source", "ROV_heading", 
+          "Ship_heading", "Speed_kts", "Altitude_m", "Slant_range_m", 
+          "Rogue_pitch", "Rogue_roll", "MiniZeus_zoom_percent",
+          "MiniZeus_focus_percent", "MiniZeus_aperture_percent", 
+          "Conductivity_mS_cm", "Temperature_C", "Pressure_dbar", 
+          "DO_Sat_percent", "Sea_Pressure_dbar", "Salinity_PSU", 
+          "Sound_Speed_m_s", "Specific_Cond_uS_cm", "Density_kg_m3", 
+          "DO_conc_mgL")
 
 
 #===============================================================================
@@ -262,12 +279,28 @@ fillgaps <- function(tofill, forfilling, type="", sourcefields, fillfields ){
   return(tofill)
 }
 
+
+
 #===============#
 #    POSITION   #
 #===============#
-# Check for relationship between tofill and forfilling
+
+# Compare hypack and manual tracking backup beacon positions by transect
 tmp <- merge(ondat, Manual_Track_Master, by="Datetime")
-if(nrow(tmp) > 0) plot(tmp$Beacon_Longitude.x, tmp$Beacon_Longitude.y)
+# Map each transect
+for (i in unique(ondat$Transect_Name)){
+  ot <- ondat[ondat$Transect_Name == i,]
+  mt <- tmp[tmp$Transect_Name == i,]
+  plot(ot$Ship_Longitude, ot$Ship_Latitude, 
+       asp=1, main=i, pch=16, cex=.5, col="#009E73", 
+       xlab = "Longitude", ylab="Latitude")
+  points(ot$Beacon_Longitude, ot$Beacon_Latitude, 
+         pch=16, cex=.5, col="#0072B2")
+  points(mt$Beacon_Longitude.y, mt$Beacon_Latitude.y, 
+         pch=16, cex=.5, col="#D55E00")
+  legend("bottom", horiz=T, bty = "n", legend = c("Ship", "Hypack", "Manual"),
+         col = c("#009E73","#0072B2","#D55E00"), pch=16)
+}
 # Fill gaps in Beacon long and lat with TrackMan manual ROV GPS
 message( "Filling position with TrackMan manual ROV GPS:")
 ondat <- fillgaps(tofill=ondat,
@@ -276,17 +309,8 @@ ondat <- fillgaps(tofill=ondat,
                   sourcefields=c("Beacon_Longitude", "Beacon_Latitude", 
                                  "Beacon_Source"),
                   fillfields=c("Beacon_Longitude", "Beacon_Latitude", "ID") )
-# Check for relationship between tofill and forfilling
-tmp <- merge(ondat, Hemisphere_Master, by="Datetime")
-if(nrow(tmp) > 0) plot(tmp$Beacon_Longitude, tmp$Longitude)
-# Fill remaining gaps in Beacon long and lat with ship GPS backup (Hemisphere GPS)
-message( "Filling position with ship GPS backup (Hemisphere GPS):")
-ondat <- fillgaps(tofill=ondat,
-                  forfilling=Hemisphere_Master,
-                  type = "pos",
-                  sourcefields=c("Beacon_Longitude", "Beacon_Latitude", 
-                                 "Beacon_Source"),
-                  fillfields=c("Longitude", "Latitude", "ID") )
+
+
 
 #==============#
 #    HEADING   #
@@ -474,96 +498,110 @@ print(table(ondat$Beacon_Source))
 # towards the bow are (+) for 'GPS_along'. For trig purposes, abeam = opposite 
 # and along = adjacent.
 
-# Compute length of hypotenuse to determine offset distance, in meters.
-# Offset dist will be 0 if GPS_abeam and GPS_along are 0
-offset_dist <- sqrt((GPS_abeam^2) + (GPS_along^2))
-
-# Calculate the angle from the center of the ship to the antenna location
-# Absolute value
-offset_angle <- atan(GPS_abeam/GPS_along)
-offset_angle <- abs(offset_angle * (180/pi)) #Convert to degrees.
-
-# Set bearing when the GPS either along=0 or abeam == 0 or both
-# GPS antenna dead center on the ship 
-if(GPS_abeam == 0 & GPS_along == 0) {   
-  bearing <- 0 
-# GPS antenna along keel line, forward of the center of ship
-} else if (GPS_abeam == 0 & GPS_along > 0) { 
-  bearing <- ondat$Ship_heading
-  # GPS antenna along keel line, aft of the center of ship
-} else if (GPS_abeam == 0 & GPS_along < 0) { 
-  bearing <- ondat$Ship_heading - 180
-  # GPS antenna centered fore/aft, but port of the keel line
-} else if (GPS_abeam > 0 & GPS_along == 0) { 
-  bearing <- ondat$Ship_heading - 90
-  # GPS antenna centered fore/aft, but starboard of the keel line
-} else if (GPS_abeam < 0 & GPS_along == 0) { 
-  bearing <- ondat$Ship_heading + 90
-}
-
-# Calculate bearing with offset angle when along and abeam are not == 0 
-# When GPS is starboard and aft, abeam (-) and along (-)
-if (GPS_abeam < 0 & GPS_along < 0){
-  # Subtract offset angle
-  bearing <- ondat$Ship_heading - offset_angle - 180
-# When GPS is port and aft, abeam (+) and along (-)
-} else if (GPS_abeam > 0 & GPS_along < 0){
-  # Add offset angle
-  bearing <- ondat$Ship_heading + offset_angle + 180
-# When GPS is starboard and forward, abeam (-) and along (+)
-} else if (GPS_abeam < 0 & GPS_along > 0){
-  # Add offset angle
-  bearing <- ondat$Ship_heading + offset_angle 
-# When GPS is port and forward, abeam (+) and along (+)
-} else if (GPS_abeam > 0 & GPS_along > 0){
-  # Subtract offset angle 
-  bearing <- ondat$Ship_heading - offset_angle
-}
-
-# If bearing is negative, add to 360
-bearing[bearing < 0] <- bearing[bearing < 0] + 360
-# If bearing is greater than 360, subtract 360 from bearing
-bearing[bearing > 360] <- bearing[bearing > 360] - 360
-
-# Apply offsets from GPS to center of ship using bearing and offset_dist
-# Question: should this offset only be applied to specific beacon sources? 
-# e.g. primary but not ship?
-offsets <- destPoint(p=ondat[c("Beacon_Longitude",
-                               "Beacon_Latitude")],
-                     b=bearing, 
-                     d=offset_dist)
-# Add new offset long/lat to ondat
-ondat$ROV_Longitude <- offsets[,1]
-ondat$ROV_Latitude <- offsets[,2]
-
+# # Compute length of hypotenuse to determine offset distance, in meters.
+# # Offset dist will be 0 if GPS_abeam and GPS_along are 0
+# offset_dist <- sqrt((GPS_abeam^2) + (GPS_along^2))
+# 
+# # Calculate the angle from the center of the ship to the antenna location
+# # Absolute value
+# offset_angle <- atan(GPS_abeam/GPS_along)
+# offset_angle <- abs(offset_angle * (180/pi)) #Convert to degrees.
+# 
+# # Set bearing when the GPS either along=0 or abeam == 0 or both
+# # GPS antenna dead center on the ship
+# if(GPS_abeam == 0 & GPS_along == 0) {
+#   bearing <- 0
+# # GPS antenna along keel line, forward of the center of ship
+# } else if (GPS_abeam == 0 & GPS_along > 0) {
+#   bearing <- ondat$Ship_heading
+#   # GPS antenna along keel line, aft of the center of ship
+# } else if (GPS_abeam == 0 & GPS_along < 0) {
+#   bearing <- ondat$Ship_heading - 180
+#   # GPS antenna centered fore/aft, but port of the keel line
+# } else if (GPS_abeam > 0 & GPS_along == 0) {
+#   bearing <- ondat$Ship_heading - 90
+#   # GPS antenna centered fore/aft, but starboard of the keel line
+# } else if (GPS_abeam < 0 & GPS_along == 0) {
+#   bearing <- ondat$Ship_heading + 90
+# }
+# 
+# # Calculate bearing with offset angle when along and abeam are not == 0
+# # When GPS is starboard and aft, abeam (-) and along (-)
+# if (GPS_abeam < 0 & GPS_along < 0){
+#   # Subtract offset angle
+#   bearing <- ondat$Ship_heading - offset_angle - 180
+# # When GPS is port and aft, abeam (+) and along (-)
+# } else if (GPS_abeam > 0 & GPS_along < 0){
+#   # Add offset angle
+#   bearing <- ondat$Ship_heading + offset_angle + 180
+# # When GPS is starboard and forward, abeam (-) and along (+)
+# } else if (GPS_abeam < 0 & GPS_along > 0){
+#   # Add offset angle
+#   bearing <- ondat$Ship_heading + offset_angle
+# # When GPS is port and forward, abeam (+) and along (+)
+# } else if (GPS_abeam > 0 & GPS_along > 0){
+#   # Subtract offset angle
+#   bearing <- ondat$Ship_heading - offset_angle
+# }
+# 
+# # If bearing is negative, add to 360
+# bearing[bearing < 0] <- bearing[bearing < 0] + 360
+# # If bearing is greater than 360, subtract 360 from bearing
+# bearing[bearing > 360] <- bearing[bearing > 360] - 360
+# 
+# # Apply offsets from GPS to center of ship using bearing and offset_dist
+# # Question: should this offset only be applied to specific beacon sources?
+# # e.g. primary but not ship?
+# offsets <- destPoint(p=ondat[c("Beacon_Longitude",
+#                                "Beacon_Latitude")],
+#                      b=bearing,
+#                      d=offset_dist)
+# # Add new offset long/lat to ondat
+# ondat$ROV_Longitude <- offsets[,1]
+# ondat$ROV_Latitude <- offsets[,2]
+ondat$ROV_Longitude <- ondat$Beacon_Longitude
+ondat$ROV_Latitude <- ondat$Beacon_Latitude
 
 
 #===============================================================================
 # STEP 8 - REMOVE BEACON OUTLIERS
 
-# Calculate cross track distance between GPS track of the Ship and beacon 
-# position. Do this by creating a point distance matrix between each 
-# interpolated beacon position, and the Ship_GPS point for that same second
+# Calculate distance between adjacent points in track
+ondat <- ondat[order(ondat$Datetime),]
+alongdist <- c(0, geosphere::distGeo(
+  as.matrix(ondat[1:(nrow(ondat)-1), c("ROV_Longitude","ROV_Latitude")]),
+  as.matrix(ondat[2:nrow(ondat), c("ROV_Longitude","ROV_Latitude")])))
+# Set distance to zero if between transects
+for(i in 2:nrow(ondat)){
+  if( ondat$Transect_Name[i-1] != ondat$Transect_Name[i] )
+  alongdist[i] <- 0
+}
+# Check
+message("\nSummary of distance between adjacent ROV position", "\n")
+print(summary(alongdist))
+# Remove distances greater than 15 meters
+alongdist[alongdist > 15] <- NA
+# Check
+message("\nRemoved ", length(which(is.na(alongdist))) ," outliers greater than ", 
+        "15 m between along track ROV positions")
+
+# Calculate cross track distance between ship pos and beacon pos
 crossdist <- geosphere::distGeo(
   as.matrix(ondat[c("Ship_Longitude","Ship_Latitude")]), 
   as.matrix(ondat[c("ROV_Longitude","ROV_Latitude")]))
 # Check
 message("\nSummary of distance between ship and ROV position", "\n")
 print(summary(crossdist))
-
-# Look for outliers (+/- 1.5*Interquartile range)
-outlier_limit <- median(crossdist) + (1.5*IQR(crossdist))
+# Look for outliers (+/- 2.5 * Interquartile range)
+outlier_limit <- median(crossdist) + (2.5*IQR(crossdist))
 # Remove distances greater than the max_dist and upper
 crossdist[crossdist > max_dist | crossdist > outlier_limit] <- NA
 # Check
-message("\nOutliers greater than ", round(min(c(outlier_limit, max_dist)),1),
-        " m were removed")
-message("\nSummary of distance between ship and ROV position", 
-        " after outliers removed", "\n")
-print(summary(crossdist))
+message("\nRemoved ", length(which(is.na(crossdist))) ," outliers greater than ", 
+        round(min(c(outlier_limit, max_dist)),1)," m between ship and ROV")
 # Set long/lat values outside of range to NA
-ondat$ROV_Longitude[is.na(crossdist)] <- NA
-ondat$ROV_Latitude[is.na(crossdist)] <- NA
+ondat$ROV_Longitude[is.na(crossdist) | is.na(alongdist)] <- NA
+ondat$ROV_Latitude[is.na(crossdist) | is.na(alongdist)] <- NA
 
 # Re-interpolate Beacon long/lat values now that outliers have been removed
 # Variables to interpolate
@@ -636,22 +674,6 @@ for (i in unique(ondat$Transect_Name)){
 
 #===============================================================================
 # STEP 10 - WRITE FINAL PROCESSED DATA TO FILE
-
-
-# Fields to include in final processed files
-flds <- c("Datetime","Transect_Name", "Dive_Phase", "ROV_Longitude_loess", 
-          "ROV_Latitude_loess", "ROV_Longitude_smoothed", 
-          "ROV_Latitude_smoothed", "ROV_Longitude_unsmoothed", 
-          "ROV_Latitude_unsmoothed", "ROV_Source", "Ship_Longitude", 
-          "Ship_Latitude", "Depth_m", "Depth_Source", "ROV_heading", 
-          "Ship_heading", "Speed_kts", "Altitude_m", "Slant_range_m", 
-          "Rogue_pitch", "Rogue_roll", "MiniZeus_zoom_percent",
-          "MiniZeus_focus_percent", "MiniZeus_aperture_percent", 
-          "MiniZeus_pitch", "MiniZeus_roll", "ROV_pitch", "ROV_roll",
-          "Conductivity_mS_cm", "Temperature_C", "Pressure_dbar", 
-          "DO_Sat_percent", "Sea_Pressure_dbar", "Salinity_PSU", 
-          "Sound_Speed_m_s", "Specific_Cond_uS_cm", "Density_kg_m3", 
-          "DO_conc_mgL")
 
 # Final dataset
 fdat <- ondat[flds]

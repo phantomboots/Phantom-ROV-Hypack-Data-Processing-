@@ -12,9 +12,9 @@
 #                 Points .SHP are generated from the LOESS data only (i.e. 
 #                 generally the more accurate of the two smoothing functions).
 #
-# Script Author: Ben Snow
-# Script Date: Jul 2, 2020
-# R Version: 3.5.1
+# Script Author: Ben Snow, adapted by Jessica Nephin
+# Script Date: Jul 2, 2020 adapted in Feb 2022
+# R Version: 3.5.1, version 4.0.2
 
 
 ################################################################################
@@ -52,10 +52,10 @@ lapply(packages, require, character.only = TRUE)
 wdir <- getwd() 
 
 # Project folder
-project_folder <- "Pac2021-054_phantom"
+project_folder <- "Pac2019-015_phantom"
 
 # Name of Ship used in the survey
-ship_name <- "RV Manyberries"
+ship_name <- "Vector"
 
 # Directories where final processed data are stored
 imports_dir <- file.path(wdir, project_folder, "Data/3.Final_Processed_Data")

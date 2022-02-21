@@ -66,6 +66,7 @@
 #          - Using terra instead of rgdal, accepts NA values
 #          - Added before or after dive phase field, used before and after 
 #            of descent or ascent in case there are multiple transects in a dive
+#          - Removed filling beacon position gaps with ship position
 ################################################################################
 
 
@@ -136,24 +137,22 @@ device_types <- c("POS","EC1","HCP","GYR","DFT")
 # Set column names for position, depth, heading, draft and heave data sources. 
 # Must match the names as listed in hardware devices. If a device is not present, 
 # write NULL. MAKE SURE DEVICE NAMES MATCH .RAW FILES 
-ship_heading_pref <- "Hemisphere" # DEV 3 
-GPS_pref <- "Hemisphere" # DEV 3
-depth_pref <- "RBR" # DEV 10
-pos_pref <- "USBL_Model" # DEV 4
-phantom_heading_pref <- "OSD_Heading_Depth_Capture" # Dev 2
-speed_pref <- "ROWETech_DVL" # Dev 6
-altitude_pref <- "ROWETech_DVL" # Dev 6
-slant_pref <- "MiniZeus_Range_Tritech" # Dev 8
-rogue_cam_pref <- "Cyclops_Tilt" # Dev 1
+ship_heading_pref <- "Hemisphere GPS" 
+GPS_pref <- "Hemisphere GPS"
+depth_pref <- "RBR CTD" 
+pos_pref <- "USBL_ROV1_300 Series" 
+phantom_heading_pref <- "OSD_Heading_Depth_Capture" 
+speed_pref <- "ROWETech_DVL" 
+altitude_pref <- "ROWETech_DVL" 
+slant_pref <- "MiniZeus_Range_Tritech"
+rogue_cam_pref <- "Cyclops_Tilt"
 
 # Set names for secondary hardware devices, for cases were primary device may 
 # be malfunctioning, NULL if there is no secondary
-pos_secondary <- "USBL_ROV1_300" # Dev 5
-depth_secondary <- NULL #"OSD_Heading_Depth_Capture" # Dev 2
+pos_secondary <- "USBL_Model 4370_Wide angle" 
+depth_secondary <- NULL 
 
 
-## -- notes - need to look into another secondary position source, lots of 
-# gap filling with ship pos which isn't ideal
 
 #===============================================================================
 # STEP 3 - START LOG FILE
@@ -207,10 +206,9 @@ extractHypack <- function( hfile ){
   # Extract device info 
   # Question: Could grep OFF offset info as well, could that be important?
   dev <- hlines[grepl("DEV", hlines)]
-  dev <- gsub("\"", "", dev) %>% strsplit(., " ") %>% map(., ~ c(V=.)) %>% 
-    bind_rows(.) %>% as.data.frame()
-  # Only need columns 2 and 4
-  dev <- dev[,c("V2","V4")] 
+  devices <- sub('.*"(.*)".*', "\\1", dev)
+  ID <-  sub('.*DEV ', "", dev) %>% strsplit(., " ") %>% sapply(.,"[[",1)
+  dev <- data.frame(ID=ID, Device=devices)
   # Extract UTM Zone
   # From the 3rd column of line 5
   longitude <- hlines[5] %>% strsplit(., " ") %>% 
@@ -236,6 +234,8 @@ extractHypack <- function( hfile ){
   # rbind lines together in dataframe, fills in blanks with NA
   ds <- ds_lines %>% strsplit(., " ") %>% map(., ~ c(X=.)) %>% 
     bind_rows(.) %>% as.data.frame()
+  # Rename field 1
+  names(ds)[1] <- "Device_type"
   # Set all columns except X1 and X2 as numeric
   if( ncol(ds) > 3 ){
     ds[,-c(1:2)] <- apply(ds[,-c(1:2)], 2, as.numeric)
@@ -253,8 +253,7 @@ extractHypack <- function( hfile ){
                                                seconds(ds$X3[ds$X3 < ds$X3[1]]))
   }
   # Merge device and data stream tables
-  alldat <- merge(dev, ds, by.x = "V2", by.y = "X2")
-  names(alldat)[1:3] <- c("ID", "Device", "Device_type")
+  alldat <- merge(dev, ds, by.x = "ID", by.y = "X2")
   # Add UTM zone field
   alldat$Zone <- zone
   # Return
@@ -304,8 +303,10 @@ if( convert_depth ) depths$Depth2 <- depths$Depth2 * 3.28084
 # Remove duplicated
 depths <- depths[!duplicated(depths$Datetime),]
 # Plot, look for tight relationship between depth sensors
-plot(depths$Depth_m, depths$Depth2)
-abline(a=0, b=1, col="red")
+if ( any(!is.na(depths$Depth2)) ) {
+  plot(depths$Depth_m, depths$Depth2)
+  abline(a=0, b=1, col="red")
+}
 # Use depth_secondary to fill in gaps in depth_pref where possible
 depths$Depth <- ifelse( is.na(depths$Depth_m), depths$Depth2, depths$Depth_m )
 # Depth source
@@ -378,7 +379,7 @@ positions$Beacon_Gaps <- na.locf(positions$Beacon_Gaps, fromLast = FALSE)
 # Warn: filling in gap values with non-primary data sources
 if( any(positions$Beacon_Gaps > 60 & is.na(positions$Beacon_Northing)) ){
   warning("Gaps greater than 60 seconds exist in the primary position sensor.\n", 
-          "Attempting to fill using secondary source then ship position.")
+          "Attempting to fill using secondary position source.")
 }
 # Replace primary with secondary when primary is NA for more than 60 seconds
 positions$Beacon_Northing <-ifelse( positions$Beacon_Gaps > 60 & 
@@ -389,22 +390,11 @@ positions$Beacon_Easting <- ifelse( positions$Beacon_Gaps > 60 &
                                       is.na(positions$Beacon_Easting), 
                                     positions$Beacon_Easting2, 
                                     positions$Beacon_Easting )
-# Then, replace remaining primary gaps over 60 with ship
-positions$Beacon_Northing <-ifelse( positions$Beacon_Gaps > 60 & 
-                                      is.na(positions$Beacon_Northing), 
-                                    positions$Ship_Northing, 
-                                    positions$Beacon_Northing )
-positions$Beacon_Easting <- ifelse( positions$Beacon_Gaps > 60 & 
-                                      is.na(positions$Beacon_Easting), 
-                                    positions$Ship_Easting, 
-                                    positions$Beacon_Easting )
 # Add source field
 positions$Beacon_Source <- "Primary"
 positions$Beacon_Source[is.na(positions$Beacon_Easting)] <- NA
 positions$Beacon_Source[positions$Beacon_Easting == 
                          positions$Beacon_Easting2] <- "Secondary"
-positions$Beacon_Source[positions$Beacon_Easting == 
-                         positions$Ship_Easting] <- "Ship"
 table(positions$Beacon_Source)
 # Convert UTM to lat/lon
 # Empty lon and lat columns to fill

@@ -57,6 +57,10 @@
 #             used ship position instead of calculated position
 #           - Calculates speed in knots from DVL velocities
 #           - Switched order of heading and depth in "ROV" files, possible error
+#           - Manual tracking lat/lon do not match beacon lat/lon from hypack,
+#             changed the bearing from the ships heading and matches better, the
+#             trackman manual says it can be referrenced to NORTH or BOW.
+#           - Added error codes to be removed from TrackMan
 ################################################################################
 
 
@@ -88,7 +92,7 @@ plan(multisession)
 wdir <- getwd() 
 
 # Enter Project folder name
-project_folder <- "Pac2021-054_phantom"
+project_folder <- "Pac2019-015_phantom"
 
 # Directory where the ASDL files are stored
 # Path must start from your working directory, check with getwd(), or full paths
@@ -107,11 +111,13 @@ zeus_roll_offset <- 6
 rov_pitch_offset <- -33
 rov_roll_offset <- -1
 
-# Set the maximum distance (in meters) that can occur between the ROV and ship
-# Will differ depending on the ROV
-# Question - what is this distance for phantom (100m) and boots (1000m)?
-max_dist <- 100
+# Check order of ROV heading and depth fields in ASDL log files 'heading_depth'
+# Assign order and names and depth and heading columns
+rov_order <- c("Depth_m","ROV_heading")
 
+# Should the ROV depth source be converted to meters?
+# Multiply by 3.28084
+convert_depth <- FALSE
 
 #===============================================================================
 # STEP 2 - START LOG FILE
@@ -156,8 +162,8 @@ readASDL <- function( afile, type ){
       alines <- alines[colcount == median(colcount)]
     }
     # Bind lines together in dataframe, fills in blanks with NA
-    ds_list <-  alines %>% strsplit(., ",") 
-    ds <- map(ds_list, ~ c(X=.)) %>% bind_rows(.) %>% as.data.frame()
+    ds <-  alines %>% strsplit(., ",")  %>%
+      map(., ~ c(X=.)) %>% bind_rows(.) %>% as.data.frame()
     # Make a copy of X1 prior to datetime formatting
     dtype <- ds$X1 # Copy first column
     # Keep only relevant columns based on type
@@ -229,27 +235,33 @@ readASDL <- function( afile, type ){
 #======================#
 
 # List files
-ROV_files <- list.files(pattern = "^ROV", path = ASDL_dir, full.names = T)
+dh_files <- list.files(pattern = "Depth", path = ASDL_dir, full.names = T)
+dh_files <- dh_files[grep("heading", dh_files, ignore.case = T)]
+
 # Run if files exist
-if( length(ROV_files) > 0 ){
+if( length(dh_files) > 0 ){
   # Message
   message("\nCreating 'ROV_Heading_Depth_MasterLog.csv'", "\n")
   # Apply function in parallel
-  rovlist <- future_lapply(ROV_files, FUN=readASDL, type="rov")
+  rovlist <- future_lapply(dh_files, FUN=readASDL, type="rov")
   # Bind into dataframe
   ROV_all <- do.call("rbind", rovlist)
   # Rename
-  names(ROV_all) <- c("Datetime","ROV_heading","Depth_m")
+  names(ROV_all) <- c("Datetime", rov_order)
   # Set depths below zero to zero
   ROV_all$Depth_m[ROV_all$Depth_m < 0] <- 0
   # Convert depth from feet to meters
   # Question: This was not done in previous version, should depth be in meters? 
-  ROV_all$Depth_m <- ROV_all$Depth_m * 3.28084
+  if( convert_depth ) ROV_all$Depth_m <- ROV_all$Depth_m * 3.28084
   # Summary
   print(summary(ROV_all))
+  # Check depth
+  plot(ROV_all$Depth_m)
   # Write
   write.csv(ROV_all, file.path(save_dir,"ROV_Heading_Depth_MasterLog.csv"),
             quote = F, row.names = F)
+} else {
+  stop("\nNo Heading Depth files were found!\n")
 }
 
 #======================#
@@ -277,6 +289,8 @@ if( length(Tritech_files) > 0 ){
   # Write
   write.csv(Tritech_all, file.path(save_dir,"Tritech_SlantRange_MasterLog.csv"),
             quote = F, row.names = F)
+} else {
+  stop("\nNo Tritech files were found!\n")
 }
 
 #======================#
@@ -305,6 +319,8 @@ if( length(RBR_files) > 0 ){
   # Write
   write.csv(RBR_all, file.path(save_dir,"RBR_CTD_MasterLog.csv"),
             quote = F, row.names = F)
+} else {
+  stop("\nNo RBR files were found!\n")
 }
 
 
@@ -317,8 +333,9 @@ if( length(RBR_files) > 0 ){
 # from processing to simplify
 
 # List files
-GPS_files <- list.files(pattern = "Hemisphere_position", 
-                        path = ASDL_dir, full.names = T)
+GPS_files <- list.files(pattern = "Hemisphere", path = ASDL_dir, full.names = T)
+GPS_files <- GPS_files[grep("position", GPS_files, ignore.case = T)]
+
 # Run if files exist
 if( length(GPS_files) > 0 ){
   # Message
@@ -336,6 +353,8 @@ if( length(GPS_files) > 0 ){
   # Write
   write.csv(GPS_all, file.path(save_dir,"Hemisphere_GPS_MasterLog.csv"),
             quote = F, row.names = F)
+} else {
+  stop("\nNo hemisphere position files were found!\n")
 }
 
 #========================#
@@ -347,8 +366,9 @@ if( length(GPS_files) > 0 ){
 # out after time interp. Is there a reason that shouldn't be done?
 
 # List files
-head_files <- list.files(pattern = "Hemisphere_heading", 
-                         path = ASDL_dir, full.names = T)
+head_files <- list.files(pattern = "Hemisphere", path = ASDL_dir, full.names = T)
+head_files <- head_files[grep("heading", head_files, ignore.case = T)]
+
 # Run if files exist
 if( length(head_files) > 0 ){
   # Message
@@ -364,6 +384,8 @@ if( length(head_files) > 0 ){
   # Write
   write.csv(heading_all, file.path(save_dir,"Hemisphere_Heading_MasterLog.csv"),
             quote = F, row.names = F)
+} else {
+  stop("\nNo hemisphere heading files were found!\n")
 }
 
 #===============#
@@ -392,6 +414,8 @@ if( length(track_files) > 0 ){
   # Write
   write.csv(Track_all, file.path(save_dir,"TrackMan_Beacons_MasterLog.csv"),
             quote = F, row.names = F)
+} else {
+  stop("\nNo TrackMan files were found!\n")
 }
 
 #===================#
@@ -429,6 +453,8 @@ if( length(DVL_files) > 0 ){
   # Write
   write.csv(DVL_all, file.path(save_dir,"ROWETECH_DVL_MasterLog.csv"),
             quote = F, row.names = F)
+} else {
+  stop("\nNo DVL files were found!\n")
 }
 
 #===================#
@@ -454,7 +480,10 @@ if( length(sound_files) > 0 ){
   # Write
   write.csv(sound_all, file.path(save_dir,"Vector_12Khz_Sounder_MasterLog.csv"),
             quote = F, row.names = F)
+} else {
+  stop("\nNo Vector_12 files were found!\n")
 }
+
 
 #======================#
 #      MiniZeus ZFA    #
@@ -478,7 +507,10 @@ if( length(ZFA_files) > 0 ){
   # Write
   write.csv(ZFA_all, file.path(save_dir,"MiniZeus_ZFA_MasterLog.csv"),
             quote = F, row.names = F)
+} else {
+  stop("\nNo MiniZeus files were found!\n")
 }
+
 
 #===================#
 #    MINIZEUS IMU   #
@@ -512,13 +544,14 @@ if( length(IMU_files) > 0 ){
   # Write
   write.csv(IMU_all, file.path(save_dir,"Zeus_ROV_IMU_MasterLog.csv"),
             quote = F, row.names = F)
+} else {
+  stop("\nNo Zeus_Cans files were found!\n")
 }
 
 
 #===============================================================================
 # STEP 4 - CALCULATE ROV POSITION FROM TRACKMAN 
 
-# Question - When is this needed?
 # Computes the coordinates of each beacon using the X, Y distance and bearing 
 # from the hydrophone specified in the TrackMan master file and converts these 
 # to new Lat/Long positions for the vehicle.
@@ -536,25 +569,25 @@ if( !exists("GPS_all") ){
   GPS_all$Datetime <- ymd_hms(GPS_all$Datetime)
 }
 
-# Filter out TrackMan readings where no DistanceX or Distance
-TrackMan <- filter(Track_all, DistanceX_m != 0 & Error_Code != 18)
+# Filter out TrackMan readings where no Distance or bad error codes
+TrackMan <- filter(Track_all, DistanceX_m != 0 &  DistanceY_m != 0 &
+                     Error_Code == 0 | 
+                     (Error_Code > 20 & Error_Code != 23 & Error_Code != 73))
 # Join the Lat/Long positions to the TrackMan DF
 New_Tracking <- left_join(TrackMan, GPS_all, by = "Datetime")
 # Calculate distance to ship from DistanceX and DistanceY variables
-New_Tracking$Distance <- sqrt(abs(New_Tracking$DistanceX_m)^2 + 
-                                abs(New_Tracking$DistanceY_m)^2)
+New_Tracking$Distance <- sqrt(New_Tracking$DistanceX_m^2 + 
+                                New_Tracking$DistanceY_m^2)
 # Remove records with NA coordinates 
 New_Tracking <- New_Tracking[!is.na(New_Tracking$Latitude),]
-# Remove records with distance out of range 
-message( "Removing ", length(which(New_Tracking$Distance > max_dist)), 
-         " records with distance greater than ", max_dist, " m")
-New_Tracking <- New_Tracking[New_Tracking$Distance < max_dist,]
 # Check
 hist(New_Tracking$Distance, breaks = 30)
-
+# Bearing, calculate from ships heading
+bearing <- New_Tracking$Ship_Heading + New_Tracking$Target_Bearing
+bearing[bearing > 360] <- bearing[bearing > 360] - 360
 # Generate new points with X,Y distance and bearing from existing Lat/Longs
 Beacon_Coords <- destPoint(p=New_Tracking[c("Longitude","Latitude")], 
-                           b=New_Tracking$Target_Bearing, 
+                           b=bearing, 
                            d=New_Tracking$Distance)
 # Slot the new Beacon tracking points back into New_Tracking DF
 New_Tracking$Beacon_Longitude <- Beacon_Coords[,1]
