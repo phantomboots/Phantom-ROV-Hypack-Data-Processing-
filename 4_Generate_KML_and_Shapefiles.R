@@ -60,7 +60,7 @@ ship_name <- "Manyberries"
 
 # Create spatial data by "Transect_Name" or "Dive_Name"
 # If dives, onlyTransects must have been FALSE in script 1
-type <- "Transect_Name"
+type <- "Dive_Name"
 
 # Directories where final processed data are stored
 imports_dir <- file.path(wdir, project_folder, "Data/3.Final_Processed_Data")

@@ -1,5 +1,5 @@
 #===============================================================================
-# Script Name: 3_QAQC_Interpolation__Offset_and_Data_Smoothing.R
+# Script Name: 3_QAQC_Interpolate__Smooth.R
 # Function: This script reads in the .CSV files created from "1_Hypack Data 
 #           Parser_****.R', "2_ASDL Data Processing.R' and"2b_Manual Beacon 
 #           Position Calculator.R". It fills in the best position and depth data 
@@ -142,7 +142,6 @@ max_dist <- 100
 
 
 # Fields to include in final processed files
-# "MiniZeus_pitch","MiniZeus_roll","ROV_pitch","ROV_roll" 
 flds <- c("Datetime","Dive_Name", "Transect_Name", "Dive_Phase", 
           "ROV_Longitude_loess", "ROV_Latitude_loess", "ROV_Longitude_smoothed", 
           "ROV_Latitude_smoothed", "ROV_Longitude_unsmoothed", 
@@ -151,6 +150,7 @@ flds <- c("Datetime","Dive_Name", "Transect_Name", "Dive_Phase",
           "Ship_heading", "Speed_kts", "Altitude_m", "Slant_range_m", 
           "Rogue_pitch", "Rogue_roll", "MiniZeus_zoom_percent",
           "MiniZeus_focus_percent", "MiniZeus_aperture_percent", 
+          "MiniZeus_pitch","MiniZeus_roll","ROV_pitch","ROV_roll",
           "Conductivity_mS_cm", "Temperature_C", "Pressure_dbar", 
           "DO_Sat_percent", "Sea_Pressure_dbar", "Salinity_PSU", 
           "Sound_Speed_m_s", "Specific_Cond_uS_cm", "Density_kg_m3", 
