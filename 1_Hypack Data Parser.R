@@ -18,6 +18,8 @@
 # The script will search for the preferred data source first (i.e. CTD depth, 
 # rather than onboard depth sensor) and will fall back to extracting the 
 # secondary source as required, while also writing a data flag.
+# 
+# Note: All datetimes in dive log must be in yyyy-mm-dd hh:mm:ss format
 #
 # Script Author: Ben Snow, adapted by Jessica Nephin
 # Script Date: Aug 27, 2019, adapted in Jan 2022
@@ -92,17 +94,18 @@ plan(multisession)
 # Select options
 
 # Choose the number of minutes for padding start and end transect times
+# If onlyTransects is FALSE, padded time can be set to 0
 padtime <- 2
 
-# Should hypack sensor data be clipped to on-transect times only?
-# TRUE for on-transect only
-# FALSE for exporting additional off-transect sensor data too
-# Question: How to incorporate this into later processing code?
-onlyTransect <- TRUE
+# Clip to transect or dive?
+# TRUE for on-transect data only
+# FALSE for entire dive including descent and ascent 
+# FALSE requires Launch and Recovery times in the dive log
+onlyTransects <- TRUE
 
 # Should the secondary depth source be converted to meters?
 # Multiply by 3.28084
-convert_depth <- FALSE
+convert_depth <- TRUE
 
 
 #===============================================================================
@@ -114,7 +117,7 @@ convert_depth <- FALSE
 wdir <- getwd() 
 
 # Enter Project folder
-project_folder <- "Pac2019-015_phantom"
+project_folder <- "Pac2021-054_phantom"
 
 # Directory where Hypack .RAW files are stored
 hypack_path <- file.path(wdir, project_folder, "Data/Raw")
@@ -137,20 +140,20 @@ device_types <- c("POS","EC1","HCP","GYR","DFT")
 # Set column names for position, depth, heading, draft and heave data sources. 
 # Must match the names as listed in hardware devices. If a device is not present, 
 # write NULL. MAKE SURE DEVICE NAMES MATCH .RAW FILES 
-ship_heading_pref <- "Hemisphere GPS" 
-GPS_pref <- "Hemisphere GPS"
-depth_pref <- "RBR CTD" 
-pos_pref <- "USBL_ROV1_300 Series" 
-phantom_heading_pref <- "OSD_Heading_Depth_Capture" 
+ship_heading_pref <- "Hemisphere_GPS"
+GPS_pref <- "Hemisphere_GPS"
+depth_pref <- "RBR_CTD_Depth" 
+pos_pref <- "USBL_4370_Wide" 
+phantom_heading_pref <- "ROV_Heading_Depth_UTurns" 
 speed_pref <- "ROWETech_DVL" 
 altitude_pref <- "ROWETech_DVL" 
-slant_pref <- "MiniZeus_Range_Tritech"
-rogue_cam_pref <- "Cyclops_Tilt"
+slant_pref <- "Tritech_Slant_Range"
+rogue_cam_pref <- "MiniZeus_ROV_IMU_Pitch_Roll"
 
 # Set names for secondary hardware devices, for cases were primary device may 
 # be malfunctioning, NULL if there is no secondary
-pos_secondary <- "USBL_Model 4370_Wide angle" 
-depth_secondary <- NULL 
+pos_secondary <- "USBL_1000-21884" 
+depth_secondary <- "ROV_Heading_Depth_UTurns" 
 
 
 
@@ -170,7 +173,7 @@ sTime <- Sys.time( )
 # Messages
 message("Parsing ", project_folder, " project data on ", Sys.Date(), "\n")
 message("Padding start and end of transects by ", padtime, " minutes\n")
-message("Only export on-transect data? ", onlyTransect, "\n")
+message("Only export on-transect data? ", onlyTransects, "\n")
 
 # Print device types and names
 cat("Device types:\n")
@@ -298,7 +301,7 @@ depths <- merge(depth_data, depth_data2, by="Datetime", all=T)
 depths$Depth_m[ depths$Depth_m < 0 ] <- NA
 depths$Depth2[ depths$Depth2 < 0 ] <- NA
 # Convert Depth to meters
-# Question: This was not done in previous version, should depth_secondary be in meters? 
+# Question: What units should depth_secondary be in?  
 if( convert_depth ) depths$Depth2 <- depths$Depth2 * 3.28084
 # Remove duplicated
 depths <- depths[!duplicated(depths$Datetime),]
@@ -521,6 +524,7 @@ message("\nExtracting Rogue pitch and roll")
 cam_data <- dat[dat$Device_type == "HCP" & dat$Device == rogue_cam_pref, 
                 c("X5", "X6", "Datetime")] # X4 was all zeros
 # Question: Confirm which is pitch and roll?
+# Followed order in code but doesn't match up with 2019-015 processed data
 names(cam_data)[1:2] <- c("Rogue_roll","Rogue_pitch")
 # Remove duplicated
 pitchroll <- cam_data[!duplicated(cam_data$Datetime),]
@@ -626,26 +630,40 @@ message( "\n", nrow(pl), " planned transects found in Hypack for ",
 
 # Read in the start and end time from the Dive Log
 dlog <- read.csv(divelog_path)
+message( "\n", "Start of dive log... \n")
+print(head(dlog))
 
 # Check for all required fields
-dnames <- c("Dive_Name", "Transect_Name", "Start_UTC", "End_UTC")
-if( any(!dnames %in% names(dlog)) ) {
-  stop( "Missing fields in dive log: ", 
-        paste(dnames[!dnames %in% names(dlog)], collapse = ", "))
+dnames <- c("Dive_Name", "Transect_Name")
+# For only transects data processing
+if( onlyTransects ){
+  tnames <- c("Start_UTC", "End_UTC")
+  cnames <- c(dnames, tnames)
+  if( any(!cnames %in% names(dlog)) ) {
+    stop( "Missing fields in dive log -> ", 
+          paste(cnames[!cnames %in% names(dlog)], collapse = ", "))
+  } else {
+    # Remove all but required fields
+    dlog <- dlog[cnames]
+  }
+# For launch to recovery data processing (onlyTransects=FALSE)
 } else {
-  # Remove all but required fields
-  dlog <- dlog[dnames]
+  tnames <- c("Start_UTC", "End_UTC","Launch_UTC", "Recovery_UTC")
+  cnames <- c(dnames, tnames)
+  if( any(!cnames %in% names(dlog)) ) {
+    stop( "Missing fields in dive log -> ", 
+          paste(cnames[!cnames %in% names(dlog)], collapse = ", "))
+  } else {
+    # Remove all but required fields
+    dlog <- dlog[cnames]
+  }
 }
-
 # Set datetime format
-dlog$Start_UTC <- mdy_hm(dlog$Start_UTC)
-dlog$End_UTC <- mdy_hm(dlog$End_UTC)
-
+dlog[tnames] <- lapply( dlog[tnames], FUN=function(x) ymd_hms(x) )
 # Pad out the transect start/end times by 'padtime' minutes each to ensure overlap with 
 # transect annotations
 dlog$Start_UTC_pad <- dlog$Start_UTC - minutes(padtime)
 dlog$End_UTC_pad <- dlog$End_UTC + minutes(padtime)
-
 # Crop padded times so there is no overlap between transects
 for (i in 2:nrow(dlog)){
   if( dlog$End_UTC_pad[i-1] > dlog$Start_UTC_pad[i] ){
@@ -655,57 +673,70 @@ for (i in 2:nrow(dlog)){
     dlog$Start_UTC_pad[i] <- dlog$End_UTC[i-1]
   }
 }
-# Generate a second-by-second sequence of datetimes from the start to finish 
-# of the on-transect portion of each dive. 
+# Generate by second sequence of datetimes from start to end of transects 
 slog <- NULL
 for(i in 1:nrow(dlog)){
-  name <- dlog$Transect_Name[i]
   tmp <- data.frame(
-    Transect_Name = name, 
-    Datetime = seq(dlog$Start_UTC_pad[i],dlog$End_UTC_pad[i], 1),
-    Dive_Phase = "On_transect"
-  )
+    Dive_Name = dlog$Dive_Name[i], 
+    Transect_Name = dlog$Transect_Name[i],
+    Datetime = seq(dlog$Start_UTC_pad[i],dlog$End_UTC_pad[i], 1) )
   # Bind each transect to the previous
   slog <- rbind(slog, tmp)
 }
-# Change dive phase to before or after if before start or after end time
-for (n in unique(slog$Transect_Name)){
-  # Rows for transect n
-  ind <- which(slog$Transect_Name == n)
-  # Before start
-  st <- slog$Datetime[slog$Transect_Name == n] < 
-    dlog$Start_UTC[dlog$Transect_Name == n]
-  slog$Dive_Phase[ind[st]] <- "Before_transect"
-  # After end
-  en <- slog$Datetime[slog$Transect_Name == n] > 
-    dlog$End_UTC[dlog$Transect_Name == n]
-  slog$Dive_Phase[ind[en]] <- "After_transect"
+# Add sequence from launch to recovery when onlyTransects=FALSE
+if( !onlyTransects ){
+  # Dives only
+  dives <- dlog[!duplicated(dlog$Dive_Name),]
+  lrlog <- NULL
+  for(i in 1:nrow(dives)){
+    ltmp <- data.frame(
+      Dive_Name = dives$Dive_Name[i], 
+      Transect_Name = "",
+      Datetime = seq(dives$Launch_UTC[i],dives$Recovery_UTC[i], 1) )
+    # Bind each transect to the previous
+    lrlog <- rbind(lrlog, ltmp)
+  }
+  # Removes datetimes already in slog
+  lrlog <- lrlog[!(lrlog$Datetime %in% slog$Datetime),]
+  # Bind to slog
+  slog <- rbind(lrlog, slog)
 }
-
-# Save for use in later processing scripts
-save(slog, file=file.path(save_dir, "Dive_Times_1Hz.RData"))
+# Order
+slog <- slog[order(slog$Datetime),]
+# Add dive phases
+slog$Dive_Phase <- ""
+# On transect
+for (n in unique(dlog$Transect_Name)){
+  p_ind <- which(slog$Datetime >= dlog$Start_UTC_pad[dlog$Transect_Name == n] & 
+                 slog$Datetime <= dlog$End_UTC_pad[dlog$Transect_Name == n])
+  slog$Dive_Phase[p_ind] <- "Padded_transect"
+  t_ind <- which(slog$Datetime >= dlog$Start_UTC[dlog$Transect_Name == n] & 
+                 slog$Datetime <= dlog$End_UTC[dlog$Transect_Name == n])
+  slog$Dive_Phase[t_ind] <- "On_transect"
+}
+# Add off_transect phases if onlyTransect=FALSE
+if( !onlyTransects ){
+  # If empty, add off_transect dive phase
+  slog$Dive_Phase[slog$Dive_Phase == ""] <- "Off_transect"
+}
 
 # Merge the hypack processed data with the 1 Hz  dive log sequence
-# Removes senor data that is not on-transect if onlyTransect == TRUE
-ondat <- merge(slog, sdat, by = "Datetime", all.x=T)
-if( !onlyTransect ) {
-  offdat <- merge(slog, sdat, by = "Datetime", all=T)
-  offdat <- offdat[is.na(offdat$Transect_Name),]
-}
+dat <- merge(slog, sdat, by = "Datetime", all.x=T)
+
 # Message
-cat("\n", length(unique(ondat$Transect_Name)), "transects: \n")
-cat(paste0(unique(ondat$Transect_Name), collapse = "\n"), "\n")
+cat("\n", length(unique(dat$Dive_Name)), "dives: \n")
+cat(paste0(unique(dat$Dive_Name), collapse = "\n"), "\n")
 # Check
-# Map each transect
-for (i in unique(ondat$Transect_Name)){
-  tmp <- ondat[ondat$Transect_Name == i,]
+# Map each dive
+for (i in unique(dat$Dive_Name)){
+  tmp <- dat[dat$Dive_Name == i,]
   plot(tmp$Ship_Longitude,tmp$Ship_Latitude, asp=1, main=i, pch=16, cex=.5)
   points(tmp$Beacon_Longitude,tmp$Beacon_Latitude, col="blue", pch=16, cex=.5)
 }
 
 # Summary
-message("\nSummary of expanded 1Hz on-transect hypack data", "\n")
-print(summary(ondat))
+message("\nSummary of expanded 1Hz hypack data", "\n")
+print(summary(dat))
 
 
 #===============================================================================
@@ -715,21 +746,13 @@ print(summary(ondat))
 # Save as RData for use in later processing scripts
 save(plannedTransects, file=file.path(save_dir,"Hypack_PlannedTransects.RData"))
 
-# Transects only
+# All hypack sensor data by second
 # Save as RData for use in later processing scripts
-save(ondat, file=file.path(save_dir, "HypackData_onTransect.RData"))
+save(dat, file=file.path(save_dir, "HypackData_bySecond.RData"))
 # Save as CSV
-write.csv(ondat, file = file.path(save_dir, "HypackData_onTransect.csv"), 
+write.csv(dat, file = file.path(save_dir, "HypackData_bySecond.csv"), 
           quote = F, row.names = F)
 
-# Export off transect data as well if onlyTransect is FALSE
-if( !onlyTransect ) {
-  # Save as RData for use in later processing scripts
-  save(offdat, file=file.path(save_dir, "HypackData_offTransect.RData"))
-  # Save as CSV
-  write.csv(offdat, file = file.path(save_dir, "HypackData_offTransect.csv"), 
-            quote = F, row.names = F)
-}
 
 
 #===============================================================================

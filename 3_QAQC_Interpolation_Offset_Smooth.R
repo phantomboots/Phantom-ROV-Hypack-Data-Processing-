@@ -70,7 +70,7 @@
 #           - longlat rounded to 6th decimal place
 #           - renamed some attributes
 #           - doesn't use ship pos to fill gaps in beacon
-#           - added along track offset filter for points greater than 50 m away
+#           - check ships pos for outliers (greater than 25m between pos)
 #           - outlier cutoff too sensitive, changed to 2.5 IQR
 ################################################################################
 
@@ -101,7 +101,7 @@ options(digits = 12)
 wdir <- getwd() 
 
 # Project folder
-project_folder <- "Pac2019-015_phantom"
+project_folder <- "Pac2021-054_phantom"
 
 # Directory where Hypack processed data are stored
 hypack_path <- file.path(wdir, project_folder, "Data/1.Hypack_Processed_Data")
@@ -115,16 +115,16 @@ ASDL_path <- file.path(wdir, project_folder, "Data/2.ASDL_Processed_Data")
 # Export directories 
 final_dir <- file.path(wdir, project_folder, "Data/3.Final_Processed_Data")
 dir.create(final_dir, recursive = TRUE) # Will warn if already exists
-fig_dir <- file.path(wdir, project_folder, "Data/Figures")
+fig_dir <- file.path(wdir, project_folder, "Data/3.Figures")
 dir.create(fig_dir, recursive = TRUE) # Will warn if already exists
 
-# Specify offsets for ship GPS source. If more than one GPS is used, specify 
-# both sources independently. Offset to the port side are positive values for 
-# 'GPS_abeam' and offset towards the bow are positive for 'GPS_along'.
-# Question: are these the distances from the center of the ship, or from the 
-# ROV transponder? 
-GPS_abeam <- -4.1
-GPS_along <- -12.57
+# # Specify offsets for ship GPS source. If more than one GPS is used, specify 
+# # both sources independently. Offset to the port side are positive values for 
+# # 'GPS_abeam' and offset towards the bow are positive for 'GPS_along'.
+# # Question: are these the distances from the center of the ship, or from the 
+# # ROV transponder? 
+# GPS_abeam <- -4.1
+# GPS_along <- -12.57
 
 # Set the value to use for the 'window' size (in seconds) of the running median 
 # smoothing of the beacon position. Must be odd number!
@@ -143,8 +143,8 @@ max_dist <- 100
 
 # Fields to include in final processed files
 # "MiniZeus_pitch","MiniZeus_roll","ROV_pitch","ROV_roll" 
-flds <- c("Datetime","Transect_Name", "Dive_Phase", "ROV_Longitude_loess", 
-          "ROV_Latitude_loess", "ROV_Longitude_smoothed", 
+flds <- c("Datetime","Dive_Name", "Transect_Name", "Dive_Phase", 
+          "ROV_Longitude_loess", "ROV_Latitude_loess", "ROV_Longitude_smoothed", 
           "ROV_Latitude_smoothed", "ROV_Longitude_unsmoothed", 
           "ROV_Latitude_unsmoothed", "ROV_Source", "Ship_Longitude", 
           "Ship_Latitude", "Depth_m", "Depth_Source", "ROV_heading", 
@@ -172,8 +172,8 @@ sTime <- Sys.time( )
 
 # Messages
 message("QAQC ", project_folder, " project data on ", Sys.Date(), "\n\n")
-message( "GPS abeam distance = ", GPS_abeam)
-message( "GPS along distance = ", GPS_along)
+# message( "GPS abeam distance = ", GPS_abeam)
+# message( "GPS along distance = ", GPS_along)
 message( "Smoothing window = ", smooth_window)
 message( "loess span = ", loess_span)
 message( "Maximum allowable distance between ship and ROV = ", max_dist, "\n\n")
@@ -227,9 +227,16 @@ RBR_Data$ID <- "RBR CTD XLS"
 message("RBR data summary from merged excel files:")
 print(summary(RBR_Data))
 
-# Read in transect data processed at a 1Hz from Hypack (named: ondat)
-load(file=file.path(hypack_path, "HypackData_onTransect.RData"))
+# Read in transect data processed at a 1Hz from Hypack (named: dat)
+load(file=file.path(hypack_path, "HypackData_bySecond.RData"))
 
+# Is hypack data by transect or by dive?
+# Look for 'off-transect' values
+if( any(dat$Dive_Phase == 'Off_transect') ) {
+  grp <- "Dive_Name"
+} else {
+  grp <- "Transect_Name"
+}
 
 #===============================================================================
 # STEP 4 - USE ASDL AND RBR TO FILL IN HYPACK DATA GAPS 
@@ -244,7 +251,7 @@ load(file=file.path(hypack_path, "HypackData_onTransect.RData"))
 fillgaps <- function(tofill, forfilling, type="", sourcefields, fillfields ){
   # Check if fields are present in the data
   if( any(!sourcefields %in% names(tofill))  ){
-        stop("'sourcefields' were not found in 'tofill' dataframe", call.=F)
+    stop("'sourcefields' were not found in 'tofill' dataframe", call.=F)
   }
   if( any(!fillfields %in% names(forfilling)) ){
     stop("'fillfields' were not found in 'forfilling' dataframe", call.=F)
@@ -272,9 +279,9 @@ fillgaps <- function(tofill, forfilling, type="", sourcefields, fillfields ){
     stillgaps <- which(is.na(tofill[[field]]))
   }
   # Message
-  message( length(gapstofill), " gaps detected in ", field, "\n",
+  message( "\n", length(gapstofill), " gaps detected in ", field, "\n",
            length(stillgaps), " gaps remain after filling with ", 
-           fillfields[1], "\n\n")
+           fillfields[1], "\n")
   # Return
   return(tofill)
 }
@@ -285,12 +292,12 @@ fillgaps <- function(tofill, forfilling, type="", sourcefields, fillfields ){
 #    POSITION   #
 #===============#
 
-# Compare hypack and manual tracking backup beacon positions by transect
-tmp <- merge(ondat, Manual_Track_Master, by="Datetime")
-# Map each transect
-for (i in unique(ondat$Transect_Name)){
-  ot <- ondat[ondat$Transect_Name == i,]
-  mt <- tmp[tmp$Transect_Name == i,]
+# Compare hypack and manual tracking backup beacon positions by dive
+tmp <- merge(dat, Manual_Track_Master, by="Datetime")
+# Map each dive
+for (i in unique(dat$Dive_Name)){
+  ot <- dat[dat$Dive_Name == i,]
+  mt <- tmp[tmp$Dive_Name == i,]
   plot(ot$Ship_Longitude, ot$Ship_Latitude, 
        asp=1, main=i, pch=16, cex=.5, col="#009E73", 
        xlab = "Longitude", ylab="Latitude")
@@ -303,12 +310,12 @@ for (i in unique(ondat$Transect_Name)){
 }
 # Fill gaps in Beacon long and lat with TrackMan manual ROV GPS
 message( "Filling position with TrackMan manual ROV GPS:")
-ondat <- fillgaps(tofill=ondat,
-                  forfilling=Manual_Track_Master,
-                  type = "pos",
-                  sourcefields=c("Beacon_Longitude", "Beacon_Latitude", 
-                                 "Beacon_Source"),
-                  fillfields=c("Beacon_Longitude", "Beacon_Latitude", "ID") )
+dat <- fillgaps(tofill=dat,
+                forfilling=Manual_Track_Master,
+                type = "pos",
+                sourcefields=c("Beacon_Longitude", "Beacon_Latitude", 
+                               "Beacon_Source"),
+                fillfields=c("Beacon_Longitude", "Beacon_Latitude", "ID") )
 
 
 
@@ -316,121 +323,121 @@ ondat <- fillgaps(tofill=ondat,
 #    HEADING   #
 #==============#
 # Check for relationship between tofill and forfilling
-tmp <- merge(ondat, ROV_Heading_Depth_Master, by="Datetime")
+tmp <- merge(dat, ROV_Heading_Depth_Master, by="Datetime")
 if(nrow(tmp) > 0) plot(tmp$ROV_heading.x, tmp$ROV_heading.y)
 # Fill gaps in ROV heading with 'ROV_Heading_Depth_MasterLog.csv'
 message( "Filling ROV heading with 'ROV_Heading_Depth_MasterLog.csv':")
-ondat <- fillgaps(tofill=ondat,
-                  forfilling=ROV_Heading_Depth_Master,
-                  sourcefields="ROV_heading",
-                  fillfields="ROV_heading" )
+dat <- fillgaps(tofill=dat,
+                forfilling=ROV_Heading_Depth_Master,
+                sourcefields="ROV_heading",
+                fillfields="ROV_heading" )
 # Check for relationship between tofill and forfilling
-tmp <- merge(ondat, Ship_Heading_Master, by="Datetime")
+tmp <- merge(dat, Ship_Heading_Master, by="Datetime")
 if(nrow(tmp) > 0) plot(tmp$Ship_heading.x, tmp$Ship_heading.y)
 # Fill gaps in ships heading with 'Hemisphere_Heading_MasterLog.csv'
 message( "Filling ship heading with 'Hemisphere_Heading_MasterLog.csv':")
-ondat <- fillgaps(tofill=ondat,
-                  forfilling=Ship_Heading_Master,
-                  sourcefields="Ship_heading",
-                  fillfields="Ship_heading" )
+dat <- fillgaps(tofill=dat,
+                forfilling=Ship_Heading_Master,
+                sourcefields="Ship_heading",
+                fillfields="Ship_heading" )
 
 #==============#
 #     DEPTH    #
 #==============#
 # Check for relationship between tofill and forfilling
-tmp <- merge(ondat, RBR_Data, by="Datetime")
+tmp <- merge(dat, RBR_Data, by="Datetime")
 if(nrow(tmp) > 0) plot(tmp$Depth_m.x, tmp$Depth_m.y)
 # Fill gaps in depth with 'ROV_Heading_Depth_MasterLog.csv'
 message( "Filling depth with RBR CTD data:")
-ondat <- fillgaps(tofill=ondat,
-                  forfilling=RBR_Data,
-                  sourcefields=c("Depth_m","Depth_Source"),
-                  fillfields=c("Depth_m","ID"))
+dat <- fillgaps(tofill=dat,
+                forfilling=RBR_Data,
+                sourcefields=c("Depth_m","Depth_Source"),
+                fillfields=c("Depth_m","ID"))
 # Check for relationship between tofill and forfilling
-tmp <- merge(ondat, RBR_Master, by="Datetime")
+tmp <- merge(dat, RBR_Master, by="Datetime")
 if(nrow(tmp) > 0) plot(tmp$Depth_m.x, tmp$Depth_m.y)
 # Fill gaps in depth with 'ROV_Heading_Depth_MasterLog.csv'
 message( "Filling depth with RBR CTD backup:")
-ondat <- fillgaps(tofill=ondat,
-                  forfilling=RBR_Master,
-                  sourcefields=c("Depth_m","Depth_Source"),
-                  fillfields=c("Depth_m","ID"))
+dat <- fillgaps(tofill=dat,
+                forfilling=RBR_Master,
+                sourcefields=c("Depth_m","Depth_Source"),
+                fillfields=c("Depth_m","ID"))
 # Check for relationship between tofill and forfilling
-tmp <- merge(ondat, ROV_Heading_Depth_Master, by="Datetime")
+tmp <- merge(dat, ROV_Heading_Depth_Master, by="Datetime")
 if(nrow(tmp) > 0) plot(tmp$Depth_m.x, tmp$Depth_m.y)
 # Fill remaining gaps in depth with 'ROV_Heading_Depth_MasterLog.csv'
 message( "Filling depth with 'ROV_Heading_Depth_MasterLog.csv':")
-ondat <- fillgaps(tofill=ondat,
-                  forfilling=ROV_Heading_Depth_Master,
-                  sourcefields=c("Depth_m","Depth_Source"),
-                  fillfields=c("Depth_m","ID"))
+dat <- fillgaps(tofill=dat,
+                forfilling=ROV_Heading_Depth_Master,
+                sourcefields=c("Depth_m","Depth_Source"),
+                fillfields=c("Depth_m","ID"))
 
 #==================#
 #    SLANT RANGE   #
 #==================#
 # Check for relationship between tofill and forfilling
-tmp <- merge(ondat, Slant_Range_Master, by="Datetime")
+tmp <- merge(dat, Slant_Range_Master, by="Datetime")
 if(nrow(tmp) > 0) plot(tmp$Slant_range_m.x, tmp$Slant_range_m.y)
 # Fill gaps in slant range with 'Tritech_SlantRange_MasterLog.csv'
 message( "Filling slant range with Tritech backup:")
-ondat <- fillgaps(tofill=ondat,
-                  forfilling=Slant_Range_Master,
-                  sourcefields="Slant_range_m",
-                  fillfields="Slant_range_m" )
+dat <- fillgaps(tofill=dat,
+                forfilling=Slant_Range_Master,
+                sourcefields="Slant_range_m",
+                fillfields="Slant_range_m" )
 
 #===============#
 #    ALTITUDE   #
 #===============#
 # Check for relationship between tofill and forfilling
-tmp <- merge(ondat, DVL_Master, by="Datetime")
+tmp <- merge(dat, DVL_Master, by="Datetime")
 if(nrow(tmp) > 0) plot(tmp$Altitude_m.x, tmp$Altitude_m.y)
 # Question why leave out of range values as -9999, instead of NA? 
 # Fill gaps in altitude with 'ROWETECH_DVL_MasterLog.csv'
 message( "Filling altitude with DVL backup:")
-ondat <- fillgaps(tofill=ondat,
-                  forfilling=DVL_Master,
-                  sourcefields="Altitude_m",
-                  fillfields="Altitude_m" )
+dat <- fillgaps(tofill=dat,
+                forfilling=DVL_Master,
+                sourcefields="Altitude_m",
+                fillfields="Altitude_m" )
 
 #==============#
 #     SPEED    #
 #==============#
 # Check for relationship between tofill and forfilling
-tmp <- merge(ondat, DVL_Master, by="Datetime")
+tmp <- merge(dat, DVL_Master, by="Datetime")
 if(nrow(tmp) > 0) plot(tmp$Speed_kts.x, tmp$Speed_kts.y)
 # Fill gaps in speed with 'ROWETECH_DVL_MasterLog.csv'
 message( "Filling speed with DVL backup:")
-ondat <- fillgaps(tofill=ondat,
-                  forfilling=DVL_Master,
-                  sourcefields="Speed_kts",
-                  fillfields="Speed_kts" )
-  
+dat <- fillgaps(tofill=dat,
+                forfilling=DVL_Master,
+                sourcefields="Speed_kts",
+                fillfields="Speed_kts" )
+
 
 
 #===============================================================================
 # STEP 5 - ADD ASDL and RBR CTD DATA NOT IN HYPACK DATA 
 
 # Merge MiniZeus fields
-ondat <- left_join(ondat, MiniZeus_ZFA_Master, by = "Datetime")
-ondat <- left_join(ondat, ROV_MiniZeus_IMUS_Master, by = "Datetime")
-ondat <- left_join(ondat, RBR_Data[!names(RBR_Data) %in% c("Depth_m","ID")], 
-                   by = "Datetime")
+dat <- left_join(dat, MiniZeus_ZFA_Master, by = "Datetime")
+dat <- left_join(dat, ROV_MiniZeus_IMUS_Master, by = "Datetime")
+dat <- left_join(dat, RBR_Data[!names(RBR_Data) %in% c("Depth_m","ID")], 
+                 by = "Datetime")
 
 # Use ASDL data to fill RBR CTD data gaps
 # Looks for gaps using the first field => Conductivity_mS_cm   
 message( "Filling RBR CTD gaps with ASDL RBR master backup:")
-ondat <- fillgaps(tofill=ondat,
-                  forfilling=RBR_Master,
-                  sourcefields=c("Conductivity_mS_cm", "Temperature_C",
-                                 "Pressure_dbar", "DO_Sat_percent", 
-                                 "Sea_Pressure_dbar", "Salinity_PSU", 
-                                 "Sound_Speed_m_s", "Specific_Cond_uS_cm"),
-                  fillfields=c("Conductivity_mS_cm", "Temperature_C",
+dat <- fillgaps(tofill=dat,
+                forfilling=RBR_Master,
+                sourcefields=c("Conductivity_mS_cm", "Temperature_C",
                                "Pressure_dbar", "DO_Sat_percent", 
                                "Sea_Pressure_dbar", "Salinity_PSU", 
-                               "Sound_Speed_m_s", "Specific_Cond_uS_cm"))
+                               "Sound_Speed_m_s", "Specific_Cond_uS_cm"),
+                fillfields=c("Conductivity_mS_cm", "Temperature_C",
+                             "Pressure_dbar", "DO_Sat_percent", 
+                             "Sea_Pressure_dbar", "Salinity_PSU", 
+                             "Sound_Speed_m_s", "Specific_Cond_uS_cm"))
 # Summary
-summary(ondat)
+summary(dat)
 
 
 #===============================================================================
@@ -438,53 +445,53 @@ summary(ondat)
 
 # Interpolate function
 # Only interpolates if there are more than 2 non-NA values
-interpGaps <- function( dat, variable ){
+interpGaps <- function( x, variable ){
   # Check total not missing values
-  total_not_missing <- sum(!is.na(dat[[variable]]))
+  total_not_missing <- sum(!is.na(x[[variable]]))
   # check there is sufficient data for na_interpolation 
   if(total_not_missing >= 2) {
     # For altitude and slant range over fill 1 row gaps
     if( grepl("altitude|slant", variable, ignore.case = T) ){
       # Interpolate, max gap = 1
-      dat[[variable]] <- na_interpolation(dat[[variable]], 
-                                          option = "linear", maxgap=1)
+      x[[variable]] <- na_interpolation(x[[variable]], 
+                                        option = "linear", maxgap=1)
     } else {
       # Interpolate, max gap = INF
-      dat[[variable]] <- na_interpolation(dat[[variable]], option = "linear")
+      x[[variable]] <- na_interpolation(x[[variable]], option = "linear")
     }
   }else {
     # Don't interpolate if there aren't enough non-NA values
-    dat[[variable]] <- dat[[variable]]
+    x[[variable]] <- x[[variable]]
   }
   # Return
-  return(dat)
+  return(x)
 }
 
 # Variables to interpolate
 # ROV heading, speed, rogue or minizeus camera variables not interpolated
-variables <- c("Beacon_Longitude", "Beacon_Latitude", "Ship_Longitude", 
-               "Ship_Latitude", "Depth_m", "Ship_heading", 
+variables <- c("Beacon_Longitude", "Beacon_Latitude", "Ship_Longitude",
+               "Ship_Latitude", "Depth_m", "Ship_heading",
                "Altitude_m", "Slant_range_m")
 
-# Interpolate within each transect by variable
+# Interpolate within each dive or transect by variable
 for (v in variables){
-  ondat <- ondat %>% group_by(Transect_Name) %>% 
+  dat <- dat %>% group_by(.dots=grp) %>% 
     group_modify(~interpGaps(.x, variable={{v}})) %>% as.data.frame()
 }
 # Summary
 message("\nSummary after variable gaps were filled with linear interpolation", "\n")
-print(summary(ondat))
+print(summary(dat))
 
 # Set out of bound alitude and slant range to NA
 # > 20m for altitude and > 10m for slant range
-ondat$Altitude_m[ondat$Altitude_m > 20] <- NA
-ondat$Slant_range_m[ondat$Slant_range_m > 10] <- NA
+dat$Altitude_m[dat$Altitude_m > 20] <- NA
+dat$Slant_range_m[dat$Slant_range_m > 10] <- NA
 
 # Add "interp" label to beacon source
-ondat$Beacon_Source[is.na(ondat$Beacon_Source)] <- "Interpolation"
+dat$Beacon_Source[is.na(dat$Beacon_Source)] <- "Interpolation"
 # Check
 message("\nBeacon position sources:")
-print(table(ondat$Beacon_Source))
+print(table(dat$Beacon_Source))
 
 
 
@@ -513,35 +520,35 @@ print(table(ondat$Beacon_Source))
 #   bearing <- 0
 # # GPS antenna along keel line, forward of the center of ship
 # } else if (GPS_abeam == 0 & GPS_along > 0) {
-#   bearing <- ondat$Ship_heading
+#   bearing <- dat$Ship_heading
 #   # GPS antenna along keel line, aft of the center of ship
 # } else if (GPS_abeam == 0 & GPS_along < 0) {
-#   bearing <- ondat$Ship_heading - 180
+#   bearing <- dat$Ship_heading - 180
 #   # GPS antenna centered fore/aft, but port of the keel line
 # } else if (GPS_abeam > 0 & GPS_along == 0) {
-#   bearing <- ondat$Ship_heading - 90
+#   bearing <- dat$Ship_heading - 90
 #   # GPS antenna centered fore/aft, but starboard of the keel line
 # } else if (GPS_abeam < 0 & GPS_along == 0) {
-#   bearing <- ondat$Ship_heading + 90
+#   bearing <- dat$Ship_heading + 90
 # }
 # 
 # # Calculate bearing with offset angle when along and abeam are not == 0
 # # When GPS is starboard and aft, abeam (-) and along (-)
 # if (GPS_abeam < 0 & GPS_along < 0){
 #   # Subtract offset angle
-#   bearing <- ondat$Ship_heading - offset_angle - 180
+#   bearing <- dat$Ship_heading - offset_angle - 180
 # # When GPS is port and aft, abeam (+) and along (-)
 # } else if (GPS_abeam > 0 & GPS_along < 0){
 #   # Add offset angle
-#   bearing <- ondat$Ship_heading + offset_angle + 180
+#   bearing <- dat$Ship_heading + offset_angle + 180
 # # When GPS is starboard and forward, abeam (-) and along (+)
 # } else if (GPS_abeam < 0 & GPS_along > 0){
 #   # Add offset angle
-#   bearing <- ondat$Ship_heading + offset_angle
+#   bearing <- dat$Ship_heading + offset_angle
 # # When GPS is port and forward, abeam (+) and along (+)
 # } else if (GPS_abeam > 0 & GPS_along > 0){
 #   # Subtract offset angle
-#   bearing <- ondat$Ship_heading - offset_angle
+#   bearing <- dat$Ship_heading - offset_angle
 # }
 # 
 # # If bearing is negative, add to 360
@@ -552,63 +559,79 @@ print(table(ondat$Beacon_Source))
 # # Apply offsets from GPS to center of ship using bearing and offset_dist
 # # Question: should this offset only be applied to specific beacon sources?
 # # e.g. primary but not ship?
-# offsets <- destPoint(p=ondat[c("Beacon_Longitude",
+# offsets <- destPoint(p=dat[c("Beacon_Longitude",
 #                                "Beacon_Latitude")],
 #                      b=bearing,
 #                      d=offset_dist)
-# # Add new offset long/lat to ondat
-# ondat$ROV_Longitude <- offsets[,1]
-# ondat$ROV_Latitude <- offsets[,2]
-ondat$ROV_Longitude <- ondat$Beacon_Longitude
-ondat$ROV_Latitude <- ondat$Beacon_Latitude
+# # Add new offset long/lat to dat
+# dat$ROV_Longitude <- offsets[,1]
+# dat$ROV_Latitude <- offsets[,2]
+dat$ROV_Longitude <- dat$Beacon_Longitude
+dat$ROV_Latitude <- dat$Beacon_Latitude
 
 
 #===============================================================================
-# STEP 8 - REMOVE BEACON OUTLIERS
+# STEP 8 - REMOVE SHIP AND ROV POSITION OUTLIERS
 
-# Calculate distance between adjacent points in track
-ondat <- ondat[order(ondat$Datetime),]
-alongdist <- c(0, geosphere::distGeo(
-  as.matrix(ondat[1:(nrow(ondat)-1), c("ROV_Longitude","ROV_Latitude")]),
-  as.matrix(ondat[2:nrow(ondat), c("ROV_Longitude","ROV_Latitude")])))
-# Set distance to zero if between transects
-for(i in 2:nrow(ondat)){
-  if( ondat$Transect_Name[i-1] != ondat$Transect_Name[i] )
-  alongdist[i] <- 0
-}
-# Check
-message("\nSummary of distance between adjacent ROV position", "\n")
-print(summary(alongdist))
-# Remove distances greater than 15 meters
-alongdist[alongdist > 15] <- NA
-# Check
-message("\nRemoved ", length(which(is.na(alongdist))) ," outliers greater than ", 
-        "15 m between along track ROV positions")
+# Order dataframe by datetime
+dat <- dat[order(dat$Datetime),]
 
-# Calculate cross track distance between ship pos and beacon pos
+# Start while loop to remove outliers from ship positions
+alongdist_ship <- 100
+while( any(alongdist_ship > 25) ){
+  # Calculate distance between adjacent points in ship track
+  alongdist_ship <- c(0, geosphere::distGeo(
+    as.matrix(dat[1:(nrow(dat)-1), c("Ship_Longitude","Ship_Latitude")]),
+    as.matrix(dat[2:nrow(dat), c("Ship_Longitude","Ship_Latitude")])))
+  # Set distance to zero if between dives or transects
+  for(i in 2:nrow(dat)){
+    if( dat$Dive_Name[i-1] != dat$Dive_Name[i] ) alongdist_ship[i] <- 0
+    if( dat$Transect_Name[i-1] != dat$Transect_Name[i] ) alongdist_ship[i] <- 0
+  }
+  # Check
+  message("\nSummary of distance between adjacent ship positions", "\n")
+  print(summary(alongdist_ship))
+  # Check
+  message("\nRemoved ", length(which(alongdist_ship > 25)) ,
+          " outliers greater than 25 m between along track ship positions")
+  # Set long/lat values outside of range to NA
+  dat$Ship_Longitude[alongdist_ship > 25] <- NA
+  dat$Ship_Latitude[alongdist_ship > 25] <- NA
+  # Re-interpolate ship long/lat values now that outliers have been removed
+  # Variables to interpolate
+  variables <- c("Ship_Longitude", "Ship_Latitude")
+  # Interpolate within each dive or transect by variable
+  for (v in variables){
+    dat <- dat %>% group_by(.dots=grp) %>% 
+      group_modify(~interpGaps(.x, variable={{v}})) %>% as.data.frame()
+  }
+} # End of while loop
+
+
+# Calculate cross track distance between ship pos and beacon positions,
+# after along track outliers have been removed and interpolated
 crossdist <- geosphere::distGeo(
-  as.matrix(ondat[c("Ship_Longitude","Ship_Latitude")]), 
-  as.matrix(ondat[c("ROV_Longitude","ROV_Latitude")]))
+  as.matrix(dat[c("Ship_Longitude","Ship_Latitude")]), 
+  as.matrix(dat[c("ROV_Longitude","ROV_Latitude")]))
 # Check
 message("\nSummary of distance between ship and ROV position", "\n")
 print(summary(crossdist))
 # Look for outliers (+/- 2.5 * Interquartile range)
 outlier_limit <- median(crossdist) + (2.5*IQR(crossdist))
-# Remove distances greater than the max_dist and upper
-crossdist[crossdist > max_dist | crossdist > outlier_limit] <- NA
 # Check
-message("\nRemoved ", length(which(is.na(crossdist))) ," outliers greater than ", 
-        round(min(c(outlier_limit, max_dist)),1)," m between ship and ROV")
+message("\nRemoved ", 
+        length(which(crossdist > max_dist | crossdist > outlier_limit)),
+        " outliers greater than ", round(min(c(outlier_limit, max_dist)),1),
+        " m between ship and ROV")
 # Set long/lat values outside of range to NA
-ondat$ROV_Longitude[is.na(crossdist) | is.na(alongdist)] <- NA
-ondat$ROV_Latitude[is.na(crossdist) | is.na(alongdist)] <- NA
-
-# Re-interpolate Beacon long/lat values now that outliers have been removed
+dat$ROV_Longitude[crossdist > max_dist | crossdist > outlier_limit] <- NA
+dat$ROV_Latitude[crossdist > max_dist | crossdist > outlier_limit] <- NA
+# Re-interpolate ROV long/lat values now that outliers have been removed
 # Variables to interpolate
 variables <- c("ROV_Longitude", "ROV_Latitude")
-# Interpolate within each transect by variable
+# Interpolate within each dive or transect by variable
 for (v in variables){
-  ondat <- ondat %>% group_by(Transect_Name) %>% 
+  dat <- dat %>% group_by(.dots=grp) %>% 
     group_modify(~interpGaps(.x, variable={{v}})) %>% as.data.frame()
 }
 
@@ -619,39 +642,39 @@ for (v in variables){
 
 # Smoothing function
 # Round values to the 6th decimal
-smoothCoords <- function( dat, variable ){
+smoothCoords <- function( x, variable ){
   # loess smooth
   lname <- paste(variable, "loess", sep="_")
-  dat[[lname]] <- round(loess(dat[[variable]] ~ as.numeric(dat$Datetime), 
-                        span = loess_span)$fitted, 6)
+  x[[lname]] <- round(loess(x[[variable]] ~ as.numeric(x[['Datetime']]), 
+                            span = loess_span)$fitted, 6)
   # window smooth
   sname <- paste(variable, "smoothed", sep="_")
-  dat[[sname]] <- round(runmed(dat[[variable]], smooth_window), 6)
+  x[[sname]] <- round(runmed(x[[variable]], smooth_window), 6)
   # Return
-  return(dat)
+  return(x)
 }
 
 # Variables to smooth
 variables <- c("ROV_Longitude", "ROV_Latitude")
-# Smooth using loess and window method within each transect by variable
+# Smooth using loess and window method within each dive or transect by variable
 for (v in variables){
-  ondat <- ondat %>% group_by(Transect_Name) %>% 
+  dat <- dat %>% group_by(.dots=grp) %>% 
     group_modify(~smoothCoords(.x, variable={{v}})) %>% as.data.frame()
 }
 
 # Round unsmoothed to 6 decimals places
-ondat[variables] <- round(ondat[variables], 6)
+dat[variables] <- round(dat[variables], 6)
 # Rename unsmoothed long/lat
-names(ondat)[names(ondat) %in% variables] <- c("ROV_Longitude_unsmoothed", 
-                                               "ROV_Latitude_unsmoothed")
+names(dat)[names(dat) %in% variables] <- c("ROV_Longitude_unsmoothed", 
+                                           "ROV_Latitude_unsmoothed")
 # Rename beacon source
-names(ondat)[names(ondat) == "Beacon_Source"] <- "ROV_Source"
+names(dat)[names(dat) == "Beacon_Source"] <- "ROV_Source"
 
 # Check
 # Map each transect
-for (i in unique(ondat$Transect_Name)){
-  tmp <- ondat[ondat$Transect_Name == i,]
-  png(filename=file.path(fig_dir, paste0("Transect_", i, ".png")),
+for (i in unique(dat$Dive_Name)){
+  tmp <- dat[dat$Dive_Name == i,]
+  png(filename=file.path(fig_dir, paste0("Dive_", i, ".png")),
       width=10, height=10, units = "in", res = 120)
   plot(tmp$Ship_Longitude,tmp$Ship_Latitude, 
        asp=1, main=i, pch=16, cex=.5, col="#009E73", 
@@ -671,31 +694,28 @@ for (i in unique(ondat$Transect_Name)){
 }
 
 
-
 #===============================================================================
 # STEP 10 - WRITE FINAL PROCESSED DATA TO FILE
 
 # Final dataset
-fdat <- ondat[flds]
+fdat <- dat[flds]
 
 # Save as Rdata
 save(fdat, file=file.path(final_dir, paste0(project_folder, 
-                                                   "_alltransect_NAV.RData")))
-
+                                            "_SensorData_Georeferenced.RData")))
 # Save all transects in one csv
 write.csv(fdat, quote = F, row.names = F,
-          file = file.path(final_dir, 
-                           paste0(project_folder, "_alltransect_NAV.csv")))
+          file = file.path(final_dir, paste0(project_folder, 
+                                             "_SensorData_Georeferenced.csv")))
 
-
-# Export by transect
-for (i in unique(fdat$Transect_Name)){
-  tmp <- fdat[fdat$Transect_Name == i,]
+# Export by dive
+for (i in unique(fdat$Dive_Name)){
+  tmp <- fdat[fdat$Dive_Name == i,]
   write.csv(tmp, quote = F, row.names = F,
             file = file.path(final_dir, 
-                             paste0(project_folder, "_", i, "_NAV.csv")))
+                             paste0(project_folder, "_", i, 
+                                    "_SensorData_Georeferenced.csv")))
 }
-
 
 
 

@@ -59,8 +59,9 @@
 #           - Switched order of heading and depth in "ROV" files, possible error
 #           - Manual tracking lat/lon do not match beacon lat/lon from hypack,
 #             changed the bearing from the ships heading and matches better, the
-#             trackman manual says it can be referrenced to NORTH or BOW.
-#           - Added error codes to be removed from TrackMan
+#             trackman manual says it can be referenced to NORTH or BOW.
+#           - Added more error code filters from TrackMan
+#           - removed 'Vector_12' sounder processing, wasn't used
 ################################################################################
 
 
@@ -92,7 +93,7 @@ plan(multisession)
 wdir <- getwd() 
 
 # Enter Project folder name
-project_folder <- "Pac2019-015_phantom"
+project_folder <- "Pac2021-054_phantom"
 
 # Directory where the ASDL files are stored
 # Path must start from your working directory, check with getwd(), or full paths
@@ -113,11 +114,11 @@ rov_roll_offset <- -1
 
 # Check order of ROV heading and depth fields in ASDL log files 'heading_depth'
 # Assign order and names and depth and heading columns
-rov_order <- c("Depth_m","ROV_heading")
+rov_order <- c("ROV_heading","Depth_m")
 
 # Should the ROV depth source be converted to meters?
 # Multiply by 3.28084
-convert_depth <- FALSE
+convert_depth <- TRUE
 
 #===============================================================================
 # STEP 2 - START LOG FILE
@@ -455,33 +456,6 @@ if( length(DVL_files) > 0 ){
             quote = F, row.names = F)
 } else {
   stop("\nNo DVL files were found!\n")
-}
-
-#===================#
-#   VECTOR SOUNDER  #
-#===================#
-# Question: Is this used in subsequent processing? 
-
-# List files
-sound_files <- list.files(pattern = "Vector_12", 
-                         path = ASDL_dir, full.names = T)
-# Run if files exist
-if( length(sound_files) > 0 ){
-  # Message
-  message("\nCreating 'Vector_12Khz_Sounder_MasterLog.csv'", "\n")
-  # Apply function in parallel
-  soundlist <- future_lapply(sound_files, FUN=readASDL, type="sound")
-  # Bind into data frame
-  sound_all <- do.call("rbind", soundlist)
-  # Rename
-  names(sound_all) <- c("Datetime","Bottom_Depth_m")
-  # Summary
-  print(summary(sound_all))
-  # Write
-  write.csv(sound_all, file.path(save_dir,"Vector_12Khz_Sounder_MasterLog.csv"),
-            quote = F, row.names = F)
-} else {
-  stop("\nNo Vector_12 files were found!\n")
 }
 
 

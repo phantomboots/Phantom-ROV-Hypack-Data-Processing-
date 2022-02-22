@@ -25,6 +25,7 @@
 #           - Wrote function for creating sp lines
 #           - Reduced the number of ind files by exporting all points together
 #           - Wrote function for spatial file export
+#           - Can export line as dives or transects
 ################################################################################
 
 
@@ -52,10 +53,14 @@ lapply(packages, require, character.only = TRUE)
 wdir <- getwd() 
 
 # Project folder
-project_folder <- "Pac2019-015_phantom"
+project_folder <- "Pac2021-054_phantom"
 
 # Name of Ship used in the survey
-ship_name <- "Vector"
+ship_name <- "Manyberries"
+
+# Create spatial data by "Transect_Name" or "Dive_Name"
+# If dives, onlyTransects must have been FALSE in script 1
+type <- "Transect_Name"
 
 # Directories where final processed data are stored
 imports_dir <- file.path(wdir, project_folder, "Data/3.Final_Processed_Data")
@@ -74,7 +79,7 @@ dir.create(SHP_path, recursive = TRUE) # Will warn if already exists
 
 # Load all sensor data (fdat)
 load(file=file.path(imports_dir, paste0(project_folder, 
-                                        "_alltransect_NAV.RData")))
+                                        "_SensorData_Georeferenced.RData")))
 # Load planned lines (plannedTransects)
 load(file=file.path(hypack_dir, "Hypack_PlannedTransects.RData"))
 
@@ -109,15 +114,15 @@ plot(Planned_Lines)
 createLines <- function(dat, x, y){
   # Empty list to fill
   slines <- list()
-  # Create lines for each transect
-  for (i in unique(dat$Transect_Name)) {
-    tmp <- dat[dat$Transect_Name == i,]
+  # Create lines for each transect or dive
+  for (i in unique(dat[[type]])) {
+    tmp <- dat[dat[[type]] == i,]
     slines[[i]] <- Lines(list(Line(tmp[c(x,y)])), ID = as.character(i))
   }
   # Create spatial lines data frame from list of lines
   sldf <- SpatialLinesDataFrame(
     SpatialLines(slines, proj4string = CRS("+proj=longlat +datum=WGS84")), 
-    data.frame(Name=unique(dat$Transect_Name)), match.ID = FALSE)  
+    data.frame(Name=unique(dat[[type]])), match.ID = FALSE)  
   # Return
   return(sldf)
 }
@@ -178,19 +183,24 @@ exportSpatial <- function( layer, name, driver ){
   }
 }
 
-# Write KML files
+# suffix
+suf <- sub("_.*", "", type)
+
+# Write lines as KML files
 kdriver <- "KML"
 exportSpatial(Ship_Lines, paste0(ship_name,"_Track"), kdriver)
-exportSpatial(Unsmoothed_Lines, "ROV_Unsmoothed_Track", kdriver)
-exportSpatial(Smooth_Lines, "ROV_Smoothed_Track", kdriver)
-exportSpatial(Loess_Lines, "ROV_Loess_Track", kdriver)
+exportSpatial(Unsmoothed_Lines, paste0("ROV_Unsmoothed_", suf), kdriver)
+exportSpatial(Smooth_Lines, paste0("ROV_Smoothed_", suf), kdriver)
+exportSpatial(Loess_Lines, paste0("ROV_Loess_", suf), kdriver)
 exportSpatial(Planned_Lines, "Planned_Transects", kdriver)
 
-# Write shapefiles
+# Write line as shapefiles
 edriver <- "ESRI Shapefile"
 exportSpatial(Ship_Lines, paste0(ship_name,"_Track"), edriver)
-exportSpatial(Unsmoothed_Lines, "ROV_Unsmoothed_Track", edriver)
-exportSpatial(Smooth_Lines, "ROV_Smoothed_Track", edriver)
-exportSpatial(Loess_Lines, "ROV_Loess_Track", edriver)
+exportSpatial(Unsmoothed_Lines, paste0("ROV_Unsmoothed_", suf), edriver)
+exportSpatial(Smooth_Lines, paste0("ROV_Smoothed_", suf), edriver)
+exportSpatial(Loess_Lines, paste0("ROV_Loess_", suf), edriver)
 exportSpatial(Planned_Lines, "Planned_Transects", edriver)
+
+# Write points as shapefile
 exportSpatial(Loess_Points, "ROV_Loess_Points", edriver)
