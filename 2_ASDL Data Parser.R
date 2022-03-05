@@ -282,7 +282,6 @@ if( length(Tritech_files) > 0 ){
   # Rename
   names(Tritech_all) <- c("Datetime","Slant_range_m")
   # Set values of 9.99 or 0 or less (out of range values) to NA
-  # Question: Can slant range be less than zero?
   Tritech_all$Slant_range_m[Tritech_all$Slant_range_m <= 0] <- NA
   Tritech_all$Slant_range_m[Tritech_all$Slant_range_m >= 9.99] <- NA
   # Summary
@@ -362,10 +361,6 @@ if( length(GPS_files) > 0 ){
 #   HEMISPHERE HEADING   #
 #========================#
 
-# Question: In previous version GPROT were removed prior to datetime interp, but
-# that seems to be needed for the datetime for some files. Change to only filter
-# out after time interp. Is there a reason that shouldn't be done?
-
 # List files
 head_files <- list.files(pattern = "Hemisphere", path = ASDL_dir, full.names = T)
 head_files <- head_files[grep("heading", head_files, ignore.case = T)]
@@ -392,7 +387,6 @@ if( length(head_files) > 0 ){
 #===============#
 #   TRACKMAN   #
 #===============#
-# Question: Is this used in subsequent processing?
 
 # List files
 track_files <- list.files(pattern = "^TrackMan", path = ASDL_dir, full.names = T)
@@ -422,8 +416,6 @@ if( length(track_files) > 0 ){
 #===================#
 #    ROWETech DVL   #
 #===================#
-# Question: Previously looked for -99.999 and 0 for out-of-bounds data
-# but there are other negative values, should all negatives be nodata?
 
 # List files
 DVL_files <- list.files(pattern = "DVL", path = ASDL_dir, full.names = T)
@@ -437,16 +429,16 @@ if( length(DVL_files) > 0 ){
   DVL_all <- do.call("rbind", dvllist)
   # Convert units
   DVL_all[,paste0("X", 5:9)] <- DVL_all[,paste0("X", 5:9)] / 1000
-  # Set zeros and negative values to NA
-  DVL_all[,-1] <- apply(DVL_all[,-1], 2, function(x) ifelse(x <= 0, NA, x))
+  # Set -99.999 values to NA
+  DVL_all[,-1] <- apply(DVL_all[,-1], 2, function(x) ifelse(x == -99.999, NA, x))
   # Rename
   names(DVL_all) <- c("Datetime","Bottom_X_Velocity_ms","Bottom_Y_Velocity_ms",
                       "Bottom_Z_Velocity_ms","Bottom_3D_Velocity_ms","Altitude_m")
   # Calculate speed in knots
-  # Question: Are these the correct velocity components?
   DVL_all$Speed_kts <- sqrt((DVL_all$Bottom_X_Velocity_ms)^2 + 
                               (DVL_all$Bottom_Y_Velocity_ms)^2)
   DVL_all$Speed_kts <- DVL_all$Speed_kts * 1.94384 # m/s to knots
+  # todo maybe filter out large values of speed, over 5 knots?
   # Summary
   print(summary(DVL_all))
   # Check for high speeds
@@ -509,10 +501,6 @@ if( length(IMU_files) > 0 ){
   IMU_all$MiniZeus_roll <- IMU_all$MiniZeus_roll + zeus_roll_offset 
   IMU_all$ROV_pitch <- IMU_all$ROV_pitch + rov_pitch_offset
   IMU_all$ROV_roll <- IMU_all$ROV_roll + rov_roll_offset
-  # Question: Why calculate this? Doesn't look like it is used later
-  # # Calculate difference
-  # IMU_all$MiniZeus_Pitch_Minus_ROV_Pitch <- IMU_all$Zeus_Pitch - IMU_all$ROV_Pitch
-  # IMU_all$MiniZeus_Roll_Minus_ROV_Roll <- IMU_all$Zeus_Roll - IMU_all$ROV_Roll
   # Summary
   print(summary(IMU_all))
   # Write

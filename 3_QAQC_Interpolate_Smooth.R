@@ -5,12 +5,12 @@
 #           Position Calculator.R". It fills in the best position and depth data 
 #           source for each dive, and interpolates Lat/Longs for Ship GPS 
 #           position and vehicle beacon. Next, distance to GPS track is 
-#           calculated for each beacon point, and points outside of median+1.5 *
+#           calculated for each beacon point, and points outside of median+2.5 *
 #           IQRare identified as outliers, and beacon fixes at these time points 
 #           are removed. Beacon positions are interpolated a second time (with 
 #           outliers removed). Beacon positions are then smoothed using a 
 #           rolling median (overlapping medians), using stats::runmed(). 
-#           Bandwidth is set in the 'EDIT THESE DATA' portion of these scripts. 
+#           Bandwidth is set in the 'STEP 1' portion of these scripts. 
 #           Final data for each dive are written to .CSV.
 #
 # Script Author: Ben Snow, adapted by Jessica Nephin
@@ -126,6 +126,10 @@ dir.create(fig_dir, recursive = TRUE) # Will warn if already exists
 # GPS_abeam <- -4.1
 # GPS_along <- -12.57
 
+# Do you want to use manual trackman ROV position as a backup ROV position?
+# TRUE for yes, FALSE for no
+trackman <- FALSE
+
 # Set the value to use for the 'window' size (in seconds) of the running median 
 # smoothing of the beacon position. Must be odd number!
 smooth_window <- 31
@@ -226,6 +230,10 @@ RBR_Data$ID <- "RBR CTD XLS"
 # Summary 
 message("RBR data summary from merged excel files:")
 print(summary(RBR_Data))
+# Check to see if the RBR data is from year 2000 (default in system)
+if ( any(year(RBR_Data$Datetime) == 2000) ){
+  warning("RBR year is incorrect!! No RBR CTD data with match up.")
+}
 
 # Read in transect data processed at a 1Hz from Hypack (named: dat)
 load(file=file.path(hypack_path, "HypackData_bySecond.RData"))
@@ -287,7 +295,6 @@ fillgaps <- function(tofill, forfilling, type="", sourcefields, fillfields ){
 }
 
 
-
 #===============#
 #    POSITION   #
 #===============#
@@ -309,15 +316,15 @@ for (i in unique(dat$Dive_Name)){
          col = c("#009E73","#0072B2","#D55E00"), pch=16)
 }
 # Fill gaps in Beacon long and lat with TrackMan manual ROV GPS
-message( "Filling position with TrackMan manual ROV GPS:")
-dat <- fillgaps(tofill=dat,
-                forfilling=Manual_Track_Master,
-                type = "pos",
-                sourcefields=c("Beacon_Longitude", "Beacon_Latitude", 
-                               "Beacon_Source"),
-                fillfields=c("Beacon_Longitude", "Beacon_Latitude", "ID") )
-
-
+if (trackman ){
+  message( "Filling position with TrackMan manual ROV GPS:")
+  dat <- fillgaps(tofill=dat,
+                  forfilling=Manual_Track_Master,
+                  type = "pos",
+                  sourcefields=c("Beacon_Longitude", "Beacon_Latitude", 
+                                 "Beacon_Source"),
+                  fillfields=c("Beacon_Longitude", "Beacon_Latitude", "ID") )
+}
 
 #==============#
 #    HEADING   #
@@ -340,6 +347,7 @@ dat <- fillgaps(tofill=dat,
                 forfilling=Ship_Heading_Master,
                 sourcefields="Ship_heading",
                 fillfields="Ship_heading" )
+
 
 #==============#
 #     DEPTH    #
@@ -385,6 +393,7 @@ dat <- fillgaps(tofill=dat,
                 sourcefields="Slant_range_m",
                 fillfields="Slant_range_m" )
 
+
 #===============#
 #    ALTITUDE   #
 #===============#
@@ -398,6 +407,7 @@ dat <- fillgaps(tofill=dat,
                 forfilling=DVL_Master,
                 sourcefields="Altitude_m",
                 fillfields="Altitude_m" )
+
 
 #==============#
 #     SPEED    #
@@ -459,7 +469,7 @@ interpGaps <- function( x, variable ){
       # Interpolate, max gap = INF
       x[[variable]] <- na_interpolation(x[[variable]], option = "linear")
     }
-  }else {
+  } else {
     # Don't interpolate if there aren't enough non-NA values
     x[[variable]] <- x[[variable]]
   }
@@ -578,7 +588,8 @@ dat <- dat[order(dat$Datetime),]
 
 # Start while loop to remove outliers from ship positions
 alongdist_ship <- 100
-while( any(alongdist_ship > 25) ){
+counter <- 1
+while( any(alongdist_ship > 5) ){
   # Calculate distance between adjacent points in ship track
   alongdist_ship <- c(0, geosphere::distGeo(
     as.matrix(dat[1:(nrow(dat)-1), c("Ship_Longitude","Ship_Latitude")]),
@@ -589,14 +600,15 @@ while( any(alongdist_ship > 25) ){
     if( dat$Transect_Name[i-1] != dat$Transect_Name[i] ) alongdist_ship[i] <- 0
   }
   # Check
-  message("\nSummary of distance between adjacent ship positions", "\n")
+  message("\nWhile loop #", counter)
+  message("Summary of distance between adjacent ship positions", "\n")
   print(summary(alongdist_ship))
   # Check
-  message("\nRemoved ", length(which(alongdist_ship > 25)) ,
-          " outliers greater than 25 m between along track ship positions")
+  message("\nRemoved ", length(which(alongdist_ship > 5)) ,
+          " outliers greater than 5 m between along track ship positions")
   # Set long/lat values outside of range to NA
-  dat$Ship_Longitude[alongdist_ship > 25] <- NA
-  dat$Ship_Latitude[alongdist_ship > 25] <- NA
+  dat$Ship_Longitude[alongdist_ship > 5] <- NA
+  dat$Ship_Latitude[alongdist_ship > 5] <- NA
   # Re-interpolate ship long/lat values now that outliers have been removed
   # Variables to interpolate
   variables <- c("Ship_Longitude", "Ship_Latitude")
@@ -605,6 +617,8 @@ while( any(alongdist_ship > 25) ){
     dat <- dat %>% group_by(.dots=grp) %>% 
       group_modify(~interpGaps(.x, variable={{v}})) %>% as.data.frame()
   }
+  # Number of loops counter
+  counter <- counter + 1
 } # End of while loop
 
 
@@ -616,16 +630,27 @@ crossdist <- geosphere::distGeo(
 # Check
 message("\nSummary of distance between ship and ROV position", "\n")
 print(summary(crossdist))
-# Look for outliers (+/- 2.5 * Interquartile range)
-outlier_limit <- median(crossdist) + (2.5*IQR(crossdist))
-# Check
-message("\nRemoved ", 
-        length(which(crossdist > max_dist | crossdist > outlier_limit)),
-        " outliers greater than ", round(min(c(outlier_limit, max_dist)),1),
-        " m between ship and ROV")
-# Set long/lat values outside of range to NA
-dat$ROV_Longitude[crossdist > max_dist | crossdist > outlier_limit] <- NA
-dat$ROV_Latitude[crossdist > max_dist | crossdist > outlier_limit] <- NA
+
+# Calculate outlier distance for each dive or transect
+# Loop through each dive or transect
+for (g in unique(dat[[grp]])){
+  # Indices for the group
+  ind <- which(dat[[grp]] == g)
+  # subset by grp
+  distance <- crossdist[ind]
+  # Look for outliers (+/- 2.5 * Interquartile range)
+  outlier_limit <- median(distance) + (2.5*IQR(distance))
+  # Check
+  message("\n", grp, " ", g, ": Removed ",
+          length(which(distance > max_dist | distance > outlier_limit)),
+          " outliers greater than ", round(min(c(outlier_limit, max_dist)),1),
+          " m between ship and ROV")
+  # Set long/lat values outside of range to NA
+  rem <- ind[distance > max_dist | distance > outlier_limit]
+  dat$ROV_Longitude[rem] <- NA
+  dat$ROV_Latitude[rem] <- NA
+}
+
 # Re-interpolate ROV long/lat values now that outliers have been removed
 # Variables to interpolate
 variables <- c("ROV_Longitude", "ROV_Latitude")

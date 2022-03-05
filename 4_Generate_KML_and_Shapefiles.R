@@ -58,10 +58,6 @@ project_folder <- "Pac2021-054_phantom"
 # Name of Ship used in the survey
 ship_name <- "Manyberries"
 
-# Create spatial data by "Transect_Name" or "Dive_Name"
-# If dives, onlyTransects must have been FALSE in script 1
-type <- "Dive_Name"
-
 # Directories where final processed data are stored
 imports_dir <- file.path(wdir, project_folder, "Data/3.Final_Processed_Data")
 hypack_dir <- file.path(wdir, project_folder, "Data/1.Hypack_Processed_Data")
@@ -84,10 +80,18 @@ load(file=file.path(imports_dir, paste0(project_folder,
 load(file=file.path(hypack_dir, "Hypack_PlannedTransects.RData"))
 
 
+# Is sensor data by transect or by dive?
+# Look for 'off-transect' values
+if( any(fdat$Dive_Phase == 'Off_transect') ) {
+  type <- "Dive_Name"
+} else {
+  type <- "Transect_Name"
+}
+
+
 
 #===============================================================================
 # STEP 3 - CREATE SPATIAL LINES OBJECTS
-
 
 # Create sp lines for planned transects
 # Empty list to fill

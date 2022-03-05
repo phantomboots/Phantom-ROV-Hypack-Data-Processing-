@@ -487,7 +487,8 @@ slant_data <- dat[dat$Device_type == "EC1" & dat$Device == slant_pref,
                   c("X4", "Datetime")]
 names(slant_data)[1] <- "Slant_range_m"
 # Assign NA to all negative values
-slant_data$Slant_range_m[ altitude_data$Slant_range_m < 0 ] <- NA
+slant_data$Slant_range_m[ altitude_data$Slant_range_m <= 0 ] <- NA
+slant_data$Slant_range_m[ altitude_data$Slant_range_m >= 9.99 ] <- NA
 # Remove duplicated
 slant <- slant_data[!duplicated(slant_data$Datetime),]
 # Summary
@@ -505,7 +506,9 @@ speed_data <- dat[dat$Device_type == "HCP" & dat$Device == speed_pref,
                   c("X4", "Datetime")]
 names(speed_data)[1] <- "Speed_kts"
 # Assign NA to all negative values
+# todo maybe filter out large values of speed, over 5 knots?
 speed_data$Speed_kts[ speed_data$Speed_kts < 0 ] <- NA
+#speed_data$Speed_kts[ speed_data$Speed_kts > 5 ] <- NA
 # Remove duplicated
 speed <- speed_data[!duplicated(speed_data$Datetime),]
 # Check for high speeds
