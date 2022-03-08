@@ -695,12 +695,39 @@ names(dat)[names(dat) %in% variables] <- c("ROV_Longitude_unsmoothed",
 # Rename beacon source
 names(dat)[names(dat) == "Beacon_Source"] <- "ROV_Source"
 
+
+# Function to add a scalebar to a base-graphics plot
+# Adds a scalebar in meters roughly one fifth of plot width
+myScalebar <- function(){
+  # Get plot coordinates
+  pc <- par("usr") 
+  # Convert to mercator to get units in meters
+  p1 <- geosphere::mercator(pc[c(1,3)])
+  p2 <- geosphere::mercator(pc[c(2,4)])
+  # Get 1/5th of width of plot as scale bar distance, 2 sig digits
+  # Calculate scale bar in meractor
+  dist_scale <- signif((p2[1] - p1[1]) * 0.2, digits=2)
+  units_label <- paste(dist_scale, "Meters")
+  x1 <- p2[1] - (dist_scale * 1.15)
+  x2 <- x1 + dist_scale
+  y <- p1[2] + ((p2[2] - p1[2]) * 0.05)
+  # Convert scale coorinates back to lat/long
+  l1 <- geosphere::mercator(c(x1, y), inverse = T)
+  l2 <- geosphere::mercator(c(x2, y), inverse = T)
+  # Position scale line between last two major x-axis tick marks
+  # and 1/10th of the total y-range above the lower y-axis coordinate
+  lines(x=c(l1[1],l2[1]), y=c(l1[2],l2[2]), lwd=4, lend=2)
+  # Place the units label at the midpoint of and just below the scale line
+  text(x=mean(c(l1[1],l2[1])), y=l1[2], label=units_label, adj=c(0.5, -1))
+}
+
 # Check
 # Map each transect
 for (i in unique(dat$Dive_Name)){
   tmp <- dat[dat$Dive_Name == i,]
   png(filename=file.path(fig_dir, paste0("Dive_", i, ".png")),
-      width=10, height=10, units = "in", res = 120)
+      width=12, height=10, units = "in", res = 120)
+  par(mar = c(5, 4, 4, 8), xpd = TRUE)
   plot(tmp$Ship_Longitude,tmp$Ship_Latitude, 
        asp=1, main=i, pch=16, cex=.5, col="#009E73", 
        xlab = "Longitude", ylab="Latitude")
@@ -712,7 +739,8 @@ for (i in unique(dat$Dive_Name)){
          pch=16, cex=.4, col="grey20")
   points(tmp$ROV_Longitude_loess, tmp$ROV_Latitude_loess, 
          pch=16, cex=.4, col="grey50")
-  legend("bottom", horiz=T, bty = "n",
+  myScalebar()
+  legend("right", inset = c(-0.17, 0), horiz=F, bty = "n",
          legend = c("Ship", "ROV OG", "ROV unsmooth", "ROV smooth", "ROV loess"),
          col = c("#009E73","#0072B2","#D55E00","grey20","grey50"), pch=16)
   dev.off()
