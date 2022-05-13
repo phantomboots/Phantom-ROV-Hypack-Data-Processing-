@@ -117,7 +117,7 @@ convert_depth <- TRUE
 wdir <- getwd() 
 
 # Enter Project folder
-project_folder <- "Pac2021-054_phantom"
+project_folder <- "Feb2022_ROV_Sponge_Coral_MPA"
 
 # Directory where Hypack .RAW files are stored
 hypack_path <- file.path(wdir, project_folder, "Data/Raw")
@@ -396,13 +396,15 @@ positions$Beacon_Easting <- ifelse( positions$Beacon_Gaps > 60 &
 # Add source field
 positions$Beacon_Source <- "Primary"
 positions$Beacon_Source[is.na(positions$Beacon_Easting)] <- NA
-positions$Beacon_Source[positions$Beacon_Easting == 
-                         positions$Beacon_Easting2] <- "Secondary"
+positions$Beacon_Source[!is.na(positions$Beacon_Easting2)] <- "Secondary"
 table(positions$Beacon_Source)
+
 # Convert UTM to lat/lon
 # Empty lon and lat columns to fill
 positions$Beacon_Longitude <- NA
 positions$Beacon_Latitude <- NA
+positions$Beacon_Longitude2 <- NA
+positions$Beacon_Latitude2 <- NA
 positions$Ship_Longitude <- NA
 positions$Ship_Latitude <- NA
 # Loop through UTM zones
@@ -412,23 +414,41 @@ for (z in unique(positions$Zone) ){
   # Convert to vector layer
   vb <- terra::vect(tmp, geom=c("Beacon_Easting", "Beacon_Northing"),
                     crs=paste0("+proj=utm +zone=", z," +datum=WGS84 +units=m"))
+  vb2 <- terra::vect(tmp, geom=c("Beacon_Easting2", "Beacon_Northing2"),
+                    crs=paste0("+proj=utm +zone=", z," +datum=WGS84 +units=m"))
   vs <- terra::vect(tmp, geom=c("Ship_Easting", "Ship_Northing"),
                     crs=paste0("+proj=utm +zone=", z," +datum=WGS84 +units=m"))
   # Project to lat/lon
   pb <- terra::project(vb, "+proj=longlat +datum=WGS84")
+  pb2 <- terra::project(vb2, "+proj=longlat +datum=WGS84")
   ps <- terra::project(vs, "+proj=longlat +datum=WGS84")
   # Replace with lon and lat values for zone == z rows
   positions[positions$Zone == z,"Beacon_Longitude"] <- geom(pb)[, "x"]
   positions[positions$Zone == z,"Beacon_Latitude"] <- geom(pb)[, "y"]
+  positions[positions$Zone == z,"Beacon_Longitude2"] <- geom(pb2)[, "x"]
+  positions[positions$Zone == z,"Beacon_Latitude2"] <- geom(pb2)[, "y"]  
   positions[positions$Zone == z,"Ship_Longitude"] <- geom(ps)[, "x"]
   positions[positions$Zone == z,"Ship_Latitude"] <- geom(ps)[, "y"]
 }
-# Replace NaN with NA
+# Replace NaN generate during lat/long conversion with NA values
 positions[is.na(positions)] <- NA
-# Subset
+
+#If  "Beacon_Latitude" is missing, try to get get data for the missing row from Beacon2.
+#Only replace when the primary Beacon Lat/Long is missing, and there is an available datum for the secondary
+#Beacon (Beacon_Latitude2). Same process for longitude.
+positions$Beacon_Longitude <- ifelse(is.na(positions$Beacon_Longitude) & !is.na(positions$Beacon_Longitude2),
+                                     positions$Beacon_Longitude2, 
+                                     positions$Beacon_Longitude)
+
+positions$Beacon_Latitude <- ifelse(is.na(positions$Beacon_Latitude) & !is.na(positions$Beacon_Latitude2),
+                                     positions$Beacon_Latitude2, 
+                                     positions$Beacon_Latitude)
+
+# Subset to columns of interest
 pos <- positions[c("Datetime", "Beacon_Source", "Beacon_Gaps",
                    "Beacon_Longitude","Beacon_Latitude", 
                    "Ship_Longitude","Ship_Latitude")]
+
 # Summary
 print(summary(pos))
 
