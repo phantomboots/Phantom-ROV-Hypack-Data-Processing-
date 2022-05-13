@@ -1,0 +1,330 @@
+QAQC Feb2022_ROV_Sponge_Coral_MPA project data on 2022-05-13
+
+
+Smoothing window = 31
+loess span = 0.05
+Maximum allowable distance between ship and ROV = 100
+
+
+Warning in file(file, "rt") :
+  cannot open file 'C:/Users/SnowBe/Documents/Phantom-ROV-Hypack-Data-Processing/Feb2022_ROV_Sponge_Coral_MPA/Data/2.ASDL_Processed_Data/Tritech_SlantRange_MasterLog.csv': No such file or directory
+Error in file(file, "rt") : cannot open the connection
+Error in lapply(list(...), .num_to_date) : 
+  object 'Slant_Range_Master' not found
+Warning in file(file, "rt") :
+  cannot open file 'C:/Users/SnowBe/Documents/Phantom-ROV-Hypack-Data-Processing/Feb2022_ROV_Sponge_Coral_MPA/Data/2.ASDL_Processed_Data/Manual_Beacon_Tracking_MasterLog.csv': No such file or directory
+Error in file(file, "rt") : cannot open the connection
+Error in lapply(list(...), .num_to_date) : 
+  object 'Manual_Track_Master' not found
+Error in Manual_Track_Master$ID <- "Manual tracking backup" : 
+  object 'Manual_Track_Master' not found
+Warning in file(file, "rt") :
+  cannot open file 'C:/Users/SnowBe/Documents/Phantom-ROV-Hypack-Data-Processing/Feb2022_ROV_Sponge_Coral_MPA/Data/2.ASDL_Processed_Data/Hemisphere_GPS_MasterLog.csv': No such file or directory
+Error in file(file, "rt") : cannot open the connection
+Error in lapply(list(...), .num_to_date) : 
+  object 'Hemisphere_Master' not found
+Error in Hemisphere_Master$ID <- "Ship GPS backup" : 
+  object 'Hemisphere_Master' not found
+Warning in file(file, "rt") :
+  cannot open file 'C:/Users/SnowBe/Documents/Phantom-ROV-Hypack-Data-Processing/Feb2022_ROV_Sponge_Coral_MPA/Data/2.ASDL_Processed_Data/Hemisphere_Heading_MasterLog.csv': No such file or directory
+Error in file(file, "rt") : cannot open the connection
+Error in lapply(list(...), .num_to_date) : 
+  object 'Ship_Heading_Master' not found
+Warning in file(file, "rt") :
+  cannot open file 'C:/Users/SnowBe/Documents/Phantom-ROV-Hypack-Data-Processing/Feb2022_ROV_Sponge_Coral_MPA/Data/2.ASDL_Processed_Data/ROWETECH_DVL_MasterLog.csv': No such file or directory
+Error in file(file, "rt") : cannot open the connection
+Error in lapply(list(...), .num_to_date) : object 'DVL_Master' not found
+Warning in file(file, "rt") :
+  cannot open file 'C:/Users/SnowBe/Documents/Phantom-ROV-Hypack-Data-Processing/Feb2022_ROV_Sponge_Coral_MPA/Data/2.ASDL_Processed_Data/ROV_Heading_Depth_MasterLog.csv': No such file or directory
+Error in file(file, "rt") : cannot open the connection
+Error in lapply(list(...), .num_to_date) : 
+  object 'ROV_Heading_Depth_Master' not found
+Error in ROV_Heading_Depth_Master$ID <- "ROV Heading Depth ASDL" : 
+  object 'ROV_Heading_Depth_Master' not found
+Warning in file(file, "rt") :
+  cannot open file 'C:/Users/SnowBe/Documents/Phantom-ROV-Hypack-Data-Processing/Feb2022_ROV_Sponge_Coral_MPA/Data/2.ASDL_Processed_Data/RBR_CTD_MasterLog.csv': No such file or directory
+Error in file(file, "rt") : cannot open the connection
+Error in lapply(list(...), .num_to_date) : object 'RBR_Master' not found
+Error in RBR_Master$ID <- "RBR CTD ASDL" : object 'RBR_Master' not found
+Warning in file(file, "rt") :
+  cannot open file 'C:/Users/SnowBe/Documents/Phantom-ROV-Hypack-Data-Processing/Feb2022_ROV_Sponge_Coral_MPA/Data/2.ASDL_Processed_Data/MiniZeus_ZFA_MasterLog.csv': No such file or directory
+Error in file(file, "rt") : cannot open the connection
+Error in lapply(list(...), .num_to_date) : 
+  object 'MiniZeus_ZFA_Master' not found
+Warning in file(file, "rt") :
+  cannot open file 'C:/Users/SnowBe/Documents/Phantom-ROV-Hypack-Data-Processing/Feb2022_ROV_Sponge_Coral_MPA/Data/2.ASDL_Processed_Data/Zeus_ROV_IMU_MasterLog.csv': No such file or directory
+Error in file(file, "rt") : cannot open the connection
+Error in lapply(list(...), .num_to_date) : 
+  object 'ROV_MiniZeus_IMUS_Master' not found
+Error in names(RBR_Data) <- c("Datetime", "Conductivity_mS_cm", "Temperature_C",  : 
+  'names' attribute [12] must be the same length as the vector [0]
+Error in `$<-.data.frame`(`*tmp*`, ID, value = "RBR CTD XLS") : 
+  replacement has 1 row, data has 0
+RBR data summary from merged excel files:
+< table of extent 0 x 0 >
+Warning: tz(): Don't know how to compute timezone for object of class NULL; returning "UTC". This warning will become an error in the next major version of lubridate.
+Warning in readChar(con, 5L, useBytes = TRUE) :
+  cannot open compressed file 'C:/Users/SnowBe/Documents/Phantom-ROV-Hypack-Data-Processing/Feb2022_ROV_Sponge_Coral_MPA/Data/1.Hypack_Processed_Data/HypackData_bySecond.RData', probable reason 'No such file or directory'
+Error in readChar(con, 5L, useBytes = TRUE) : cannot open the connection
+Error: object 'dat' not found
+Error in merge(dat, Manual_Track_Master, by = "Datetime") : 
+  object 'dat' not found
+Error in unique(dat$Dive_Name) : object 'dat' not found
+[[1]]
+[1] TRUE
+
+[[2]]
+[1] TRUE
+
+[[3]]
+[1] TRUE
+
+[[4]]
+[1] TRUE
+
+[[5]]
+[1] TRUE
+
+[[6]]
+[1] TRUE
+
+Warning in dir.create(final_dir, recursive = TRUE) :
+  'C:\Users\SnowBe\Documents\Projects\Feb2022_ROV_Sponge_Coral_MPA\Data\3.Final_Processed_Data' already exists
+Warning in dir.create(fig_dir, recursive = TRUE) :
+  'C:\Users\SnowBe\Documents\Projects\Feb2022_ROV_Sponge_Coral_MPA\Data\3.Figures' already exists
+    Datetime                   Conductivity_mS_cm    Temperature_C         Pressure_dbar         DO_Sat_percent        
+ Min.   :2022-02-26 15:10:15   Min.   :-0.09567813   Min.   : 1.99565594   Min.   : 10.1265497   Min.   :  6.16002006  
+ 1st Qu.:2022-02-28 20:06:48   1st Qu.: 0.00048644   1st Qu.: 7.25133627   1st Qu.: 10.2350067   1st Qu.: 35.82177349  
+ Median :2022-03-02 20:20:37   Median :30.20499754   Median : 9.01036473   Median : 39.5122525   Median : 81.25280024  
+ Mean   :2022-03-03 04:37:19   Mean   :18.96964293   Mean   : 8.17647629   Mean   : 77.5713546   Mean   : 69.46446588  
+ 3rd Qu.:2022-03-04 22:43:34   3rd Qu.:33.19444108   3rd Qu.: 9.41509005   3rd Qu.:141.3644655   3rd Qu.:103.27291840  
+ Max.   :2022-03-08 00:43:14   Max.   :33.73971170   Max.   :16.45621506   Max.   :259.7732629   Max.   :167.55656731  
+                               NA's   :16693                                                                           
+ Sea_Pressure_dbar           Depth_m                Salinity_PSU         Sound_Speed_m_s      Specific_Cond_uS_cm    
+ Min.   : -0.0059502838   Min.   : -0.0059017614   Min.   :-0.00023720   Min.   :1413.41210   Min.   : -166.9045163  
+ 1st Qu.:  0.1025067375   1st Qu.:  0.1016708318   1st Qu.: 0.00358936   1st Qu.:1436.16131   1st Qu.:    0.7385886  
+ Median : 29.3797524747   Median : 29.1401711232   Median :28.37597058   Median :1476.11727   Median :44401.9973329  
+ Mean   : 67.4388546252   Mean   : 66.8889149363   Mean   :17.50981603   Mean   :1462.22196   Mean   :27207.7916474  
+ 3rd Qu.:131.2319655360   3rd Qu.:130.1618158910   3rd Qu.:30.46946232   3rd Qu.:1484.39427   3rd Qu.:47244.1030506  
+ Max.   :249.6407628890   Max.   :247.6050319400   Max.   :31.01701050   Max.   :1486.86801   Max.   :48085.9033065  
+                                                   NA's   :16693         NA's   :17061        NA's   :16693          
+ Density_kg_m3          DO_conc_mgL               ID           
+ Min.   :-1.12407285   Min.   : 0.57823643   Length:516946     
+ 1st Qu.:-0.07930192   1st Qu.: 3.29591319   Class :character  
+ Median :22.25152442   Median : 7.64710767   Mode  :character  
+ Mean   :13.81207282   Mean   : 7.76312820                     
+ 3rd Qu.:24.10116029   3rd Qu.:12.40834303                     
+ Max.   :25.07692698   Max.   :16.81909655                     
+ NA's   :17265         NA's   :16693                           
+[[1]]
+[1] TRUE
+
+[[2]]
+[1] TRUE
+
+[[3]]
+[1] TRUE
+
+[[4]]
+[1] TRUE
+
+[[5]]
+[1] TRUE
+
+[[6]]
+[1] TRUE
+
+Device types:
+POS, EC1, HCP, GYR, DFT 
+
+Device names:
+ship_heading_pref = 'Hemisphere_GPS'
+GPS_pref = 'Hemisphere_GPS'
+depth_pref = 'RBR_CTD_Depth'
+pos_pref = 'USBL_4370_Wide'
+phantom_heading_pref = 'ROV_Heading_Depth_UTurns'
+speed_pref = 'ROWETech_DVL'
+altitude_pref = 'ROWETech_DVL'
+slant_pref = 'Tritech_Slant_Range'
+rogue_cam_pref = 'MiniZeus_ROV_IMU_Pitch_Roll'
+pos_secondary = 'USBL_300-506'
+depth_secondary = 'ROV_Heading_Depth_UTurns'
+
+
+Hypack_RBR_CTD_Depth 
+              158621 
+    Datetime                      Depth_m           Depth_Source      
+ Min.   :2022-02-26 18:27:23   Min.   :  0.002000   Length:158621     
+ 1st Qu.:2022-03-01 15:24:34   1st Qu.: 55.671750   Class :character  
+ Median :2022-03-03 15:38:15   Median :111.257000   Mode  :character  
+ Mean   :2022-03-03 13:14:53   Mean   :110.148237                     
+ 3rd Qu.:2022-03-05 22:56:08   3rd Qu.:168.529000                     
+ Max.   :2022-03-08 22:59:02   Max.   :247.603000                     
+                               NA's   :3029                           
+
+  Primary Secondary 
+      997     39699 
+    Datetime                   Beacon_Source       Beacon_Gaps           Beacon_Longitude      Beacon_Latitude     
+ Min.   :2022-02-26 18:27:24   Length:158597      Min.   : 0.000000000   Min.   :-124.231266   Min.   :49.7100521  
+ 1st Qu.:2022-03-01 15:24:32   Class :character   1st Qu.: 0.000000000   1st Qu.:-124.066609   1st Qu.:49.7910243  
+ Median :2022-03-03 15:38:13   Mode  :character   Median : 0.000000000   Median :-124.022007   Median :49.8497647  
+ Mean   :2022-03-03 13:14:46                      Mean   : 0.115777831   Mean   :-124.008271   Mean   :49.9161640  
+ 3rd Qu.:2022-03-05 22:56:08                      3rd Qu.: 0.000000000   3rd Qu.:-123.932669   3rd Qu.:50.1063923  
+ Max.   :2022-03-08 17:23:45                      Max.   :36.000000000   Max.   :-123.790744   Max.   :50.1930520  
+                                                                         NA's   :117901        NA's   :117901      
+ Ship_Longitude        Ship_Latitude       
+ Min.   :-124.231654   Min.   :49.7101643  
+ 1st Qu.:-124.066585   1st Qu.:49.7880677  
+ Median :-124.010495   Median :49.8500770  
+ Mean   :-124.005221   Mean   :49.9235772  
+ 3rd Qu.:-123.914744   3rd Qu.:50.1108612  
+ Max.   :-123.791025   Max.   :50.1925850  
+                                           
+    Datetime                    ROV_heading          Ship_heading       
+ Min.   :2022-02-26 18:27:23   Min.   :  0.000000   Min.   :  0.010000  
+ 1st Qu.:2022-03-01 15:24:31   1st Qu.: 71.000000   1st Qu.: 64.239500  
+ Median :2022-03-03 15:38:12   Median :215.000000   Median :201.598500  
+ Mean   :2022-03-03 13:14:39   Mean   :194.478645   Mean   :184.141947  
+ 3rd Qu.:2022-03-05 22:56:06   3rd Qu.:300.000000   3rd Qu.:299.227250  
+ Max.   :2022-03-08 00:41:21   Max.   :357.000000   Max.   :359.995000  
+                               NA's   :1            NA's   :15          
+   Altitude_m             Datetime                  
+ Min.   : 0.00000000   Min.   :2022-02-26 18:42:04  
+ 1st Qu.: 0.00000000   1st Qu.:2022-03-01 15:53:25  
+ Median : 1.72000000   Median :2022-03-03 15:58:55  
+ Mean   : 2.74537802   Mean   :2022-03-03 15:38:42  
+ 3rd Qu.: 3.11400000   3rd Qu.:2022-03-05 23:21:59  
+ Max.   :42.00400000   Max.   :2022-03-08 00:41:20  
+ NA's   :4                                          
+ Slant_range_m    Datetime 
+ Min.   : NA   Min.   :NA  
+ 1st Qu.: NA   1st Qu.:NA  
+ Median : NA   Median :NA  
+ Mean   :NaN   Mean   :NA  
+ 3rd Qu.: NA   3rd Qu.:NA  
+ Max.   : NA   Max.   :NA  
+   Speed_kts            Datetime                  
+ Min.   :0.0000000   Min.   :2022-02-26 18:42:04  
+ 1st Qu.:0.0960000   1st Qu.:2022-03-01 15:53:25  
+ Median :0.1490000   Median :2022-03-03 15:58:54  
+ Mean   :0.1631475   Mean   :2022-03-03 15:38:42  
+ 3rd Qu.:0.2020000   3rd Qu.:2022-03-05 23:21:59  
+ Max.   :5.1670000   Max.   :2022-03-08 00:41:20  
+ NA's   :54083                                    
+   Rogue_roll             Rogue_pitch             Datetime                  
+ Min.   :-42.070000000   Min.   :-28.3100000   Min.   :2022-02-26 18:27:23  
+ 1st Qu.: -1.040000000   1st Qu.: 27.0200000   1st Qu.:2022-03-01 15:26:14  
+ Median :  0.000000000   Median : 34.3300000   Median :2022-03-03 15:36:46  
+ Mean   :  0.639994741   Mean   : 33.8973895   Mean   :2022-03-03 13:13:42  
+ 3rd Qu.:  1.810000000   3rd Qu.: 41.3800000   3rd Qu.:2022-03-05 22:51:29  
+ Max.   : 60.850000000   Max.   : 78.5500000   Max.   :2022-03-08 00:41:21  
+  Dive_Name Transect_Name          Launch_UTC             End_UTC           Start_UTC        Recovery_UTC
+1    P10088      P10088-1 2022-02-27 16:01:00 2022-02-27 17:30:00 2022-02-27 16:41:00 2022-02-27 17:23:00
+2    P10089      P10089-1 2022-02-27 21:03:00 2022-02-27 22:33:00 2022-02-27 21:37:00 2022-02-27 22:26:00
+3    P10090      P10090-1 2022-02-27 23:38:00 2022-02-28 00:54:00 2022-02-27 23:58:00 2022-02-28 00:44:00
+4    P10091      P10091-1 2022-02-28 15:37:00 2022-02-28 17:19:00 2022-02-28 16:22:00 2022-02-28 17:09:00
+5    P10092      P10092-1 2022-02-28 20:02:00 2022-02-28 21:08:00 2022-02-28 20:23:00 2022-02-28 20:53:00
+6    P10093      P10093-1 2022-02-28 22:26:00 2022-02-28 23:24:00 2022-02-28 22:48:00 2022-02-28 23:18:00
+                                               dive_objective
+1 Survey RCAs and adjacent area for suitable rockfish habitat
+2               Assess habitat within RCAs and adjacent areas
+3                      Survey habitat in and adjacent to RCAs
+4                      Survey habitat in and adjacent to RCAs
+5                 Habitat assessment in area adjacent to RCAs
+6                             Assess habitat adjacent to RCAs
+                                                                                                                                                                                          dive_notes
+1                                                                                                                                                      Lost starboard laser near the end of the dive
+2                                                                         One transect, some nice rockfish, mixed substrate, bit of sponge but hardly any coral (see transect notes for more detail)
+3 Decided to shorten dive to accommodate dinner, will do shallower depth to save time but also because last two dives we saw more shallower  Very silty transects but quite a few fish near the end.
+4                                                                                                                                                                                               <NA>
+5                                                                                                                                                                                               <NA>
+6                                                                                                                                                                                               <NA>
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       
+1                                                                                                                                                                                                                                  Start was silty, flat and moved into some nice boulders, bedrock, a few walls, a sponge rubble section, some sporadic bubblegum coral and glass sponge thro                                                                                                                                         
+2                                                                                                                                                                                                                                                                  Mixed substrate on transect, lots of ups and downs, lots of plumose anemones in spots, quite a few little sunflower stars a                                                                                                                                         
+3                                                                                                                                                                                                                                                                                                                                   Very silty for a long time, not very much glass sponge, no                                                                                                                                         
+4 Generally silty. Began on rocky substrate covered in silt. Passed over rock walls separated by silty plains. A lot of dead sponge debris, with scattered living cloud sponge and boot sponge (some large specimens). Plainfin midshipmen were most abundant fish species - seen from fairly deep to roughly 70 m. Squat lobsters most abundant invertebrate. Very large Shortspine Thornyhea Generally silty. Began on rocky substrate covered in silt. Passed over rock walls separated by silty plains. A lot of dead sponge debris
+5                                                                                      First third of transect heavy glass sponge debris with a few living sponges. Boot sponges in deepest parts of transect on clean rocky outcrops. Three juvenile yelloweye distributed throughout transect. Shallower parts of transect, from ~75m to transect end, large, mostly live, cloud sponge gard                                                                                      First third of transect heavy glass sponge debris w
+6                                                                                                                                                                                                              Higher current than previous transects  Overall a sand and silt mixed substrate with several steep rockwalls, clean of silt. Cloud and boot sponge found along transect with gr                                                                                                                                         
+                                                                                                                                                                    transect_notes
+1                                                                                                                               Hotham Sound, transect #38 on Jessica Nephin's map
+2                                                                                                                                                 Line 33 on Jessica Nephin's maps
+3                                                                                                                                                 Jessica Nephin's map transect 41
+4                                                                                                                                      Transect number 34 on Jessica Nephin's maps
+5                                                                                                                                                                             <NA>
+6 transect shortened to accommodate bathymetry. Beginning at deepest point (~205m) and working in towards Ball Point dive site  True transect end time to be determined from video
+
+ 31 dives: 
+P10088
+P10089
+P10090
+P10091
+P10092
+P10093
+P10094
+P10095
+P10096
+P10097
+P10098
+P10099
+P10100
+P10101
+P10102
+P10103
+P10104
+P10105
+P10106
+P10107
+P10109
+P10110
+P10111
+P10112
+P10113
+P10114
+P10115
+P10116
+P10117
+P10118
+P10119 
+    Datetime                    Dive_Name         Transect_Name       Dive_Phase        Beacon_Source     
+ Min.   :2022-02-27 16:39:00   Length:113622      Length:113622      Length:113622      Length:113622     
+ 1st Qu.:2022-03-01 18:23:17   Class :character   Class :character   Class :character   Class :character  
+ Median :2022-03-03 18:19:34   Mode  :character   Mode  :character   Mode  :character   Mode  :character  
+ Mean   :2022-03-03 21:54:39                                                                              
+ 3rd Qu.:2022-03-06 15:55:40                                                                              
+ Max.   :2022-03-08 00:44:00                                                                              
+                                                                                                          
+  Beacon_Gaps   Beacon_Longitude      Beacon_Latitude      Ship_Longitude        Ship_Latitude       
+ Min.   :0      Min.   :-124.230975   Min.   :49.7101239   Min.   :-124.231654   Min.   :49.7103230  
+ 1st Qu.:0      1st Qu.:-124.067056   1st Qu.:49.7872625   1st Qu.:-124.066874   1st Qu.:49.7864034  
+ Median :0      Median :-124.010256   Median :49.8419072   Median :-124.009893   Median :49.8423964  
+ Mean   :0      Mean   :-124.008218   Mean   :49.9165517   Mean   :-124.002162   Mean   :49.9260676  
+ 3rd Qu.:0      3rd Qu.:-123.931705   3rd Qu.:50.1076658   3rd Qu.:-123.900057   3rd Qu.:50.1114768  
+ Max.   :0      Max.   :-123.791133   Max.   :50.1930520   Max.   :-123.791369   Max.   :50.1925850  
+ NA's   :8348   NA's   :84601         NA's   :84601        NA's   :8348          NA's   :8348        
+    Depth_m           Depth_Source        ROV_heading          Ship_heading          Altitude_m         Slant_range_m   
+ Min.   :  0.015000   Length:113622      Min.   :  1.000000   Min.   :  0.010000   Min.   : 0.0000000   Min.   : NA     
+ 1st Qu.: 83.028000   Class :character   1st Qu.: 64.000000   1st Qu.: 54.551000   1st Qu.: 1.3180000   1st Qu.: NA     
+ Median :124.619000   Mode  :character   Median :213.000000   Median :202.987000   Median : 2.1730000   Median : NA     
+ Mean   :125.448388                      Mean   :196.644996   Mean   :179.787872   Mean   : 3.4076659   Mean   :NaN     
+ 3rd Qu.:176.191000                      3rd Qu.:307.000000   3rd Qu.:298.972000   3rd Qu.: 3.5340000   3rd Qu.: NA     
+ Max.   :242.751000                      Max.   :357.000000   Max.   :359.995000   Max.   :42.0040000   Max.   : NA     
+ NA's   :8565                            NA's   :8350         NA's   :8363         NA's   :12961        NA's   :113622  
+   Speed_kts           Rogue_roll           Rogue_pitch        
+ Min.   :0.0000000   Min.   :-42.0700000   Min.   :-28.310000  
+ 1st Qu.:0.0980000   1st Qu.: -1.3000000   1st Qu.: 27.580000  
+ Median :0.1500000   Median : -0.3900000   Median : 34.470000  
+ Mean   :0.1635475   Mean   :  0.0091927   Mean   : 35.087995  
+ 3rd Qu.:0.2020000   3rd Qu.:  0.6800000   3rd Qu.: 41.510000  
+ Max.   :5.1670000   Max.   : 60.8500000   Max.   : 78.550000  
+ NA's   :34965       NA's   :8357          NA's   :8357        
+
+Finished: Time difference of 2.39726339976 mins
+0  
+ Median :0.1500000   Median : -0.3900000   Median : 34.470000  
+ Mean   :0.1635475   Mean   :  0.0091927   Mean   : 35.087995  
+ 3rd Qu.:0.2020000   3rd Qu.:  0.6800000   3rd Qu.: 41.510000  
+ Max.   :5.1670000   Max.   : 60.8500000   Max.   : 78.550000  
+ NA's   :34965       NA's   :8357          NA's   :8357        
+
+Finished: Time difference of 2.39726339976 mins

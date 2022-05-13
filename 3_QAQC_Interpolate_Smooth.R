@@ -101,7 +101,7 @@ options(digits = 12)
 wdir <- getwd() 
 
 # Project folder
-project_folder <- "Pac2021-054_phantom"
+project_folder <- "Feb2022_ROV_Sponge_Coral_MPA"
 
 # Directory where Hypack processed data are stored
 hypack_path <- file.path(wdir, project_folder, "Data/1.Hypack_Processed_Data")
@@ -315,6 +315,7 @@ for (i in unique(dat$Dive_Name)){
   legend("bottom", horiz=T, bty = "n", legend = c("Ship", "Hypack", "Manual"),
          col = c("#009E73","#0072B2","#D55E00"), pch=16)
 }
+
 # Fill gaps in Beacon long and lat with TrackMan manual ROV GPS
 if (trackman ){
   message( "Filling position with TrackMan manual ROV GPS:")
@@ -767,7 +768,7 @@ for (i in unique(fdat$Dive_Name)){
   write.csv(tmp, quote = F, row.names = F,
             file = file.path(final_dir, 
                              paste0(project_folder, "_", i, 
-                                    "_SensorData_Georeferenced.csv")))
+                                    "_SensorData_Georeferenced_All_Transects.csv")))
 }
 
 
