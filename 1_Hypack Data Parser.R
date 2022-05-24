@@ -117,7 +117,7 @@ convert_depth <- TRUE
 wdir <- getwd() 
 
 # Enter Project folder
-project_folder <- "Feb2022_ROV_Sponge_Coral_MPA"
+project_folder <- "May2022_PhantomMPA_PAC2022-036"
 
 # Directory where Hypack .RAW files are stored
 hypack_path <- file.path(wdir, project_folder, "Data/Raw")
@@ -127,7 +127,6 @@ divelog_path <- file.path(wdir, project_folder, "Data/Dive_Logs/Dive_Log.csv")
 
 # Create directory for saving .CSV files
 save_dir <- file.path(wdir, project_folder, "Data/1.Hypack_Processed_Data")
-dir.create(save_dir, recursive = TRUE) # Will warn if already exists
 
 
 
@@ -143,16 +142,16 @@ device_types <- c("POS","EC1","HCP","GYR","DFT")
 ship_heading_pref <- "Hemisphere_GPS"
 GPS_pref <- "Hemisphere_GPS"
 depth_pref <- "RBR_CTD_Depth" 
-pos_pref <- "USBL_4370_Wide" 
+pos_pref <- "USBL_300-506_ROV" 
 phantom_heading_pref <- "ROV_Heading_Depth_UTurns" 
 speed_pref <- "ROWETech_DVL" 
-altitude_pref <- "ROWETech_DVL" 
+altitude_pref <- "Tritech_Slant_Range" 
 slant_pref <- "Tritech_Slant_Range"
-rogue_cam_pref <- "MiniZeus_ROV_IMU_Pitch_Roll"
+rogue_cam_pref <- "Disabled"
 
 # Set names for secondary hardware devices, for cases were primary device may 
 # be malfunctioning, NULL if there is no secondary
-pos_secondary <- "USBL_1000-21884" 
+pos_secondary <- "USBL_4370_Wide_ROV" 
 depth_secondary <- "ROV_Heading_Depth_UTurns" 
 
 
@@ -485,9 +484,13 @@ print(summary(headings))
 message("\nExtracting altitude")
 # device type == 'DFT' device type
 # primary device == altitude_pref
-altitude_data <- dat[dat$Device_type == "DFT" & dat$Device == altitude_pref, 
+if(altitude_pref == "Disabled"){
+  altitude_data <- data.frame(Altitude_m = numeric(0), Datetime = numeric(0))
+}else{
+altitude_data <- dat[dat$Device_type == "HCP" & dat$Device == altitude_pref, 
                      c("X4", "Datetime")]
 names(altitude_data)[1] <- "Altitude_m"
+}
 # Assign NA to all negative values
 altitude_data$Altitude_m[ altitude_data$Altitude_m < 0 ] <- NA
 # Remove duplicated
@@ -503,9 +506,13 @@ print(summary(altitude))
 message("\nExtracting slant range")
 # device type == 'EC1' device type
 # primary device == slant_pref
+if(slant_pref == "Disabled"){
+  slant_data <- data.frame(Slant_range_m = numeric(0), Datetime = numeric(0))
+}else{
 slant_data <- dat[dat$Device_type == "EC1" & dat$Device == slant_pref, 
                   c("X4", "Datetime")]
 names(slant_data)[1] <- "Slant_range_m"
+}
 # Assign NA to all negative values
 slant_data$Slant_range_m[ altitude_data$Slant_range_m <= 0 ] <- NA
 slant_data$Slant_range_m[ altitude_data$Slant_range_m >= 9.99 ] <- NA
@@ -522,8 +529,12 @@ print(summary(slant))
 message("\nExtracting ROV speed")
 # device type == 'HCP' device type
 # primary device == speed_pref
-speed_data <- dat[dat$Device_type == "HCP" & dat$Device == speed_pref, 
+if(speed_pref == "Disabled"){
+  speed_data <- data.frame(Speed_kts=numeric(0), Datetime=numeric(0))
+}else{
+speed_data <- dat[dat$Device_type == "DFT" & dat$Device == speed_pref, 
                   c("X4", "Datetime")]
+}
 names(speed_data)[1] <- "Speed_kts"
 # Assign NA to all negative values
 # todo maybe filter out large values of speed, over 5 knots?
@@ -531,7 +542,7 @@ speed_data$Speed_kts[ speed_data$Speed_kts < 0 ] <- NA
 #speed_data$Speed_kts[ speed_data$Speed_kts > 5 ] <- NA
 # Remove duplicated
 speed <- speed_data[!duplicated(speed_data$Datetime),]
-# Check for high speeds
+# Check for high speeds (> 30 knots), reject these, as they are obviously false.
 hist(speed$Speed_kts, breaks=30)
 # Summary
 print(summary(speed))
@@ -544,11 +555,15 @@ print(summary(speed))
 message("\nExtracting Rogue pitch and roll")
 # device type == 'HCP' device type
 # primary device == rogue_cam_pref
+if(rogue_cam_pref == "Disabled"){
+  cam_data = data.frame(Rogue_roll=numeric(0), Rogue_pitch=numeric(0), Datetime=numeric(0))
+}else{
 cam_data <- dat[dat$Device_type == "HCP" & dat$Device == rogue_cam_pref, 
                 c("X5", "X6", "Datetime")] # X4 was all zeros
+}
 # Question: Confirm which is pitch and roll?
 # Followed order in code but doesn't match up with 2019-015 processed data
-names(cam_data)[1:2] <- c("Rogue_roll","Rogue_pitch")
+names(cam_data)[1:3] <- c("Rogue_roll","Rogue_pitch","Datetime")
 # Remove duplicated
 pitchroll <- cam_data[!duplicated(cam_data$Datetime),]
 # Summary
@@ -688,21 +703,21 @@ dlog[tnames] <- lapply( dlog[tnames], FUN=function(x) ymd_hms(x) )
 dlog$Start_UTC_pad <- dlog$Start_UTC - minutes(padtime)
 dlog$End_UTC_pad <- dlog$End_UTC + minutes(padtime)
 # Crop padded times so there is no overlap between transects
-for (i in 2:nrow(dlog)){
-  if( dlog$End_UTC_pad[i-1] > dlog$Start_UTC_pad[i] ){
-    # Replace end times with non-padded times
-    dlog$End_UTC_pad[i-1] <- dlog$End_UTC[i-1]
-    # Set start time to previous endtime 
-    dlog$Start_UTC_pad[i] <- dlog$End_UTC[i-1]
-  }
-}
+#for (i in 2:nrow(dlog)){
+#  if( dlog$End_UTC_pad[i-1] > dlog$Start_UTC_pad[i] ){
+#    # Replace end times with non-padded times
+#    dlog$End_UTC_pad[i-1] <- dlog$End_UTC[i-1]
+#    # Set start time to previous endtime 
+#    dlog$Start_UTC_pad[i] <- dlog$End_UTC[i-1]
+#  }
+#}
 # Generate by second sequence of datetimes from start to end of transects 
 slog <- NULL
 for(i in 1:nrow(dlog)){
   tmp <- data.frame(
     Dive_Name = dlog$Dive_Name[i], 
     Transect_Name = dlog$Transect_Name[i],
-    Datetime = seq(dlog$Start_UTC_pad[i],dlog$End_UTC_pad[i], 1) )
+    Datetime = seq(dlog$Start_UTC_pad[i],dlog$End_UTC_pad[i], 1))
   # Bind each transect to the previous
   slog <- rbind(slog, tmp)
 }
