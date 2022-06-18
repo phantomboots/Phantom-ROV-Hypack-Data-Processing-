@@ -114,7 +114,8 @@ convert_depth <- TRUE
 # Set working directory
 # Use getwd() if you are already in the right directory
 # The project folder and needs to be in the working directory
-wdir <- getwd() 
+
+wdir <- "C:/Users/SnowBe/Documents/Projects"
 
 # Enter Project folder
 project_folder <- "May2022_PhantomMPA_PAC2022-036"
@@ -144,9 +145,9 @@ GPS_pref <- "Hemisphere_GPS"
 depth_pref <- "RBR_CTD_Depth" 
 pos_pref <- "USBL_300-506_ROV" 
 phantom_heading_pref <- "ROV_Heading_Depth_UTurns" 
-speed_pref <- "ROWETech_DVL" 
+speed_pref <- "Disabled" 
 altitude_pref <- "Tritech_Slant_Range" 
-slant_pref <- "Tritech_Slant_Range"
+slant_pref <- "Disabled"
 rogue_cam_pref <- "Disabled"
 
 # Set names for secondary hardware devices, for cases were primary device may 
@@ -264,8 +265,19 @@ extractHypack <- function( hfile ){
 
 # List of hypack files
 hypack_files <- list.files(pattern = ".RAW", path = hypack_path, full.names = T)
+
 # Apply function across list of input files
 all_list <- future_lapply(hypack_files, FUN=extractHypack, future.seed=42)
+
+#Normally data field are columns X4 and X5, but HCP device types can have column X6. If not all files from a survey
+#have an HCP device active, add dummy values to column X6, so that the rbind process below can complete successfully.
+for(i in 1:length(all_list)){
+  if(is.null(all_list[[i]]$X6)){
+    X6 <- rep(NA, length(all_list[[i]]$ID))  
+    all_list[[i]] <- bind_cols(all_list[[i]], X6)
+    }
+}
+  
 dat <- do.call("rbind", all_list)
 
 
@@ -487,12 +499,13 @@ message("\nExtracting altitude")
 if(altitude_pref == "Disabled"){
   altitude_data <- data.frame(Altitude_m = numeric(0), Datetime = numeric(0))
 }else{
-altitude_data <- dat[dat$Device_type == "HCP" & dat$Device == altitude_pref, 
+altitude_data <- dat[dat$Device_type == "EC1" & dat$Device == altitude_pref, 
                      c("X4", "Datetime")]
 names(altitude_data)[1] <- "Altitude_m"
 }
 # Assign NA to all negative values
 altitude_data$Altitude_m[ altitude_data$Altitude_m < 0 ] <- NA
+altitude_data$Altitude_m[ altitude_data$Altitude_m < 9.99 ] <- NA
 # Remove duplicated
 altitude <- altitude_data[!duplicated(altitude_data$Datetime),]
 # Summary
@@ -515,7 +528,7 @@ names(slant_data)[1] <- "Slant_range_m"
 }
 # Assign NA to all negative values
 slant_data$Slant_range_m[ altitude_data$Slant_range_m <= 0 ] <- NA
-slant_data$Slant_range_m[ altitude_data$Slant_range_m >= 9.99 ] <- NA
+slant_data$Slant_range_m[ altitude_data$Slant_range_m == 9.99 ] <- NA
 # Remove duplicated
 slant <- slant_data[!duplicated(slant_data$Datetime),]
 # Summary
