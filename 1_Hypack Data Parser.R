@@ -114,10 +114,11 @@ convert_depth <- TRUE
 # Set working directory
 # Use getwd() if you are already in the right directory
 # The project folder and needs to be in the working directory
-wdir <- getwd() 
+
+wdir <- "C:/Users/SnowBe/Documents/Projects"
 
 # Enter Project folder
-project_folder <- "Pac2021-054_phantom"
+project_folder <- "May2022_PhantomMPA_PAC2022-036"
 
 # Directory where Hypack .RAW files are stored
 hypack_path <- file.path(wdir, project_folder, "Data/Raw")
@@ -127,7 +128,6 @@ divelog_path <- file.path(wdir, project_folder, "Data/Dive_Logs/Dive_Log.csv")
 
 # Create directory for saving .CSV files
 save_dir <- file.path(wdir, project_folder, "Data/1.Hypack_Processed_Data")
-dir.create(save_dir, recursive = TRUE) # Will warn if already exists
 
 
 
@@ -143,16 +143,16 @@ device_types <- c("POS","EC1","HCP","GYR","DFT")
 ship_heading_pref <- "Hemisphere_GPS"
 GPS_pref <- "Hemisphere_GPS"
 depth_pref <- "RBR_CTD_Depth" 
-pos_pref <- "USBL_4370_Wide" 
+pos_pref <- "USBL_300-506_ROV" 
 phantom_heading_pref <- "ROV_Heading_Depth_UTurns" 
-speed_pref <- "ROWETech_DVL" 
-altitude_pref <- "ROWETech_DVL" 
-slant_pref <- "Tritech_Slant_Range"
-rogue_cam_pref <- "MiniZeus_ROV_IMU_Pitch_Roll"
+speed_pref <- "Disabled" 
+altitude_pref <- "Tritech_Slant_Range" 
+slant_pref <- "Disabled"
+rogue_cam_pref <- "Disabled"
 
 # Set names for secondary hardware devices, for cases were primary device may 
 # be malfunctioning, NULL if there is no secondary
-pos_secondary <- "USBL_1000-21884" 
+pos_secondary <- "USBL_4370_Wide_ROV" 
 depth_secondary <- "ROV_Heading_Depth_UTurns" 
 
 
@@ -265,8 +265,19 @@ extractHypack <- function( hfile ){
 
 # List of hypack files
 hypack_files <- list.files(pattern = ".RAW", path = hypack_path, full.names = T)
+
 # Apply function across list of input files
 all_list <- future_lapply(hypack_files, FUN=extractHypack, future.seed=42)
+
+#Normally data field are columns X4 and X5, but HCP device types can have column X6. If not all files from a survey
+#have an HCP device active, add dummy values to column X6, so that the rbind process below can complete successfully.
+for(i in 1:length(all_list)){
+  if(is.null(all_list[[i]]$X6)){
+    X6 <- rep(NA, length(all_list[[i]]$ID))  
+    all_list[[i]] <- bind_cols(all_list[[i]], X6)
+    }
+}
+  
 dat <- do.call("rbind", all_list)
 
 
@@ -396,13 +407,15 @@ positions$Beacon_Easting <- ifelse( positions$Beacon_Gaps > 60 &
 # Add source field
 positions$Beacon_Source <- "Primary"
 positions$Beacon_Source[is.na(positions$Beacon_Easting)] <- NA
-positions$Beacon_Source[positions$Beacon_Easting == 
-                         positions$Beacon_Easting2] <- "Secondary"
+positions$Beacon_Source[!is.na(positions$Beacon_Easting2)] <- "Secondary"
 table(positions$Beacon_Source)
+
 # Convert UTM to lat/lon
 # Empty lon and lat columns to fill
 positions$Beacon_Longitude <- NA
 positions$Beacon_Latitude <- NA
+positions$Beacon_Longitude2 <- NA
+positions$Beacon_Latitude2 <- NA
 positions$Ship_Longitude <- NA
 positions$Ship_Latitude <- NA
 # Loop through UTM zones
@@ -412,23 +425,41 @@ for (z in unique(positions$Zone) ){
   # Convert to vector layer
   vb <- terra::vect(tmp, geom=c("Beacon_Easting", "Beacon_Northing"),
                     crs=paste0("+proj=utm +zone=", z," +datum=WGS84 +units=m"))
+  vb2 <- terra::vect(tmp, geom=c("Beacon_Easting2", "Beacon_Northing2"),
+                    crs=paste0("+proj=utm +zone=", z," +datum=WGS84 +units=m"))
   vs <- terra::vect(tmp, geom=c("Ship_Easting", "Ship_Northing"),
                     crs=paste0("+proj=utm +zone=", z," +datum=WGS84 +units=m"))
   # Project to lat/lon
   pb <- terra::project(vb, "+proj=longlat +datum=WGS84")
+  pb2 <- terra::project(vb2, "+proj=longlat +datum=WGS84")
   ps <- terra::project(vs, "+proj=longlat +datum=WGS84")
   # Replace with lon and lat values for zone == z rows
   positions[positions$Zone == z,"Beacon_Longitude"] <- geom(pb)[, "x"]
   positions[positions$Zone == z,"Beacon_Latitude"] <- geom(pb)[, "y"]
+  positions[positions$Zone == z,"Beacon_Longitude2"] <- geom(pb2)[, "x"]
+  positions[positions$Zone == z,"Beacon_Latitude2"] <- geom(pb2)[, "y"]  
   positions[positions$Zone == z,"Ship_Longitude"] <- geom(ps)[, "x"]
   positions[positions$Zone == z,"Ship_Latitude"] <- geom(ps)[, "y"]
 }
-# Replace NaN with NA
+# Replace NaN generate during lat/long conversion with NA values
 positions[is.na(positions)] <- NA
-# Subset
+
+#If  "Beacon_Latitude" is missing, try to get get data for the missing row from Beacon2.
+#Only replace when the primary Beacon Lat/Long is missing, and there is an available datum for the secondary
+#Beacon (Beacon_Latitude2). Same process for longitude.
+positions$Beacon_Longitude <- ifelse(is.na(positions$Beacon_Longitude) & !is.na(positions$Beacon_Longitude2),
+                                     positions$Beacon_Longitude2, 
+                                     positions$Beacon_Longitude)
+
+positions$Beacon_Latitude <- ifelse(is.na(positions$Beacon_Latitude) & !is.na(positions$Beacon_Latitude2),
+                                     positions$Beacon_Latitude2, 
+                                     positions$Beacon_Latitude)
+
+# Subset to columns of interest
 pos <- positions[c("Datetime", "Beacon_Source", "Beacon_Gaps",
                    "Beacon_Longitude","Beacon_Latitude", 
                    "Ship_Longitude","Ship_Latitude")]
+
 # Summary
 print(summary(pos))
 
@@ -465,11 +496,16 @@ print(summary(headings))
 message("\nExtracting altitude")
 # device type == 'DFT' device type
 # primary device == altitude_pref
-altitude_data <- dat[dat$Device_type == "DFT" & dat$Device == altitude_pref, 
+if(altitude_pref == "Disabled"){
+  altitude_data <- data.frame(Altitude_m = numeric(0), Datetime = numeric(0))
+}else{
+altitude_data <- dat[dat$Device_type == "EC1" & dat$Device == altitude_pref, 
                      c("X4", "Datetime")]
 names(altitude_data)[1] <- "Altitude_m"
+}
 # Assign NA to all negative values
 altitude_data$Altitude_m[ altitude_data$Altitude_m < 0 ] <- NA
+altitude_data$Altitude_m[ altitude_data$Altitude_m < 9.99 ] <- NA
 # Remove duplicated
 altitude <- altitude_data[!duplicated(altitude_data$Datetime),]
 # Summary
@@ -483,12 +519,16 @@ print(summary(altitude))
 message("\nExtracting slant range")
 # device type == 'EC1' device type
 # primary device == slant_pref
+if(slant_pref == "Disabled"){
+  slant_data <- data.frame(Slant_range_m = numeric(0), Datetime = numeric(0))
+}else{
 slant_data <- dat[dat$Device_type == "EC1" & dat$Device == slant_pref, 
                   c("X4", "Datetime")]
 names(slant_data)[1] <- "Slant_range_m"
+}
 # Assign NA to all negative values
 slant_data$Slant_range_m[ altitude_data$Slant_range_m <= 0 ] <- NA
-slant_data$Slant_range_m[ altitude_data$Slant_range_m >= 9.99 ] <- NA
+slant_data$Slant_range_m[ altitude_data$Slant_range_m == 9.99 ] <- NA
 # Remove duplicated
 slant <- slant_data[!duplicated(slant_data$Datetime),]
 # Summary
@@ -502,8 +542,12 @@ print(summary(slant))
 message("\nExtracting ROV speed")
 # device type == 'HCP' device type
 # primary device == speed_pref
-speed_data <- dat[dat$Device_type == "HCP" & dat$Device == speed_pref, 
+if(speed_pref == "Disabled"){
+  speed_data <- data.frame(Speed_kts=numeric(0), Datetime=numeric(0))
+}else{
+speed_data <- dat[dat$Device_type == "DFT" & dat$Device == speed_pref, 
                   c("X4", "Datetime")]
+}
 names(speed_data)[1] <- "Speed_kts"
 # Assign NA to all negative values
 # todo maybe filter out large values of speed, over 5 knots?
@@ -511,7 +555,7 @@ speed_data$Speed_kts[ speed_data$Speed_kts < 0 ] <- NA
 #speed_data$Speed_kts[ speed_data$Speed_kts > 5 ] <- NA
 # Remove duplicated
 speed <- speed_data[!duplicated(speed_data$Datetime),]
-# Check for high speeds
+# Check for high speeds (> 30 knots), reject these, as they are obviously false.
 hist(speed$Speed_kts, breaks=30)
 # Summary
 print(summary(speed))
@@ -524,11 +568,15 @@ print(summary(speed))
 message("\nExtracting Rogue pitch and roll")
 # device type == 'HCP' device type
 # primary device == rogue_cam_pref
+if(rogue_cam_pref == "Disabled"){
+  cam_data = data.frame(Rogue_roll=numeric(0), Rogue_pitch=numeric(0), Datetime=numeric(0))
+}else{
 cam_data <- dat[dat$Device_type == "HCP" & dat$Device == rogue_cam_pref, 
                 c("X5", "X6", "Datetime")] # X4 was all zeros
+}
 # Question: Confirm which is pitch and roll?
 # Followed order in code but doesn't match up with 2019-015 processed data
-names(cam_data)[1:2] <- c("Rogue_roll","Rogue_pitch")
+names(cam_data)[1:3] <- c("Rogue_roll","Rogue_pitch","Datetime")
 # Remove duplicated
 pitchroll <- cam_data[!duplicated(cam_data$Datetime),]
 # Summary
@@ -668,21 +716,21 @@ dlog[tnames] <- lapply( dlog[tnames], FUN=function(x) ymd_hms(x) )
 dlog$Start_UTC_pad <- dlog$Start_UTC - minutes(padtime)
 dlog$End_UTC_pad <- dlog$End_UTC + minutes(padtime)
 # Crop padded times so there is no overlap between transects
-for (i in 2:nrow(dlog)){
-  if( dlog$End_UTC_pad[i-1] > dlog$Start_UTC_pad[i] ){
-    # Replace end times with non-padded times
-    dlog$End_UTC_pad[i-1] <- dlog$End_UTC[i-1]
-    # Set start time to previous endtime 
-    dlog$Start_UTC_pad[i] <- dlog$End_UTC[i-1]
-  }
-}
+#for (i in 2:nrow(dlog)){
+#  if( dlog$End_UTC_pad[i-1] > dlog$Start_UTC_pad[i] ){
+#    # Replace end times with non-padded times
+#    dlog$End_UTC_pad[i-1] <- dlog$End_UTC[i-1]
+#    # Set start time to previous endtime 
+#    dlog$Start_UTC_pad[i] <- dlog$End_UTC[i-1]
+#  }
+#}
 # Generate by second sequence of datetimes from start to end of transects 
 slog <- NULL
 for(i in 1:nrow(dlog)){
   tmp <- data.frame(
     Dive_Name = dlog$Dive_Name[i], 
     Transect_Name = dlog$Transect_Name[i],
-    Datetime = seq(dlog$Start_UTC_pad[i],dlog$End_UTC_pad[i], 1) )
+    Datetime = seq(dlog$Start_UTC_pad[i],dlog$End_UTC_pad[i], 1))
   # Bind each transect to the previous
   slog <- rbind(slog, tmp)
 }
