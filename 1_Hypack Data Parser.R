@@ -115,19 +115,20 @@ convert_depth <- TRUE
 # Use getwd() if you are already in the right directory
 # The project folder and needs to be in the working directory
 
-wdir <- "C:/Users/SnowBe/Documents/Projects"
+wdir <- getwd()
 
 # Enter Project folder
-project_folder <- "May2022_PhantomMPA_PAC2022-036"
+project_folder <- "PAC2022-036_phantom"
 
 # Directory where Hypack .RAW files are stored
-hypack_path <- file.path(wdir, project_folder, "Data/Raw")
+hypack_path <- file.path(wdir, project_folder, "Raw")
 
 # Directory where dive log csv file is stored
-divelog_path <- file.path(wdir, project_folder, "Data/Dive_Logs/Dive_Log.csv")
+divelog_path <- file.path(wdir, project_folder, "Dive_Logs/PAC2022-036_dive_log.csv")
 
 # Create directory for saving .CSV files
-save_dir <- file.path(wdir, project_folder, "Data/1.Hypack_Processed_Data")
+save_dir <- file.path(wdir, project_folder, "1.Hypack_Processed_Data")
+dir.create(save_dir, recursive = TRUE) # Will warn if already exists
 
 
 
@@ -152,7 +153,7 @@ rogue_cam_pref <- "Disabled"
 
 # Set names for secondary hardware devices, for cases were primary device may 
 # be malfunctioning, NULL if there is no secondary
-pos_secondary <- "USBL_4370_Wide_ROV" 
+pos_secondary <- NULL
 depth_secondary <- "ROV_Heading_Depth_UTurns" 
 
 
@@ -161,7 +162,7 @@ depth_secondary <- "ROV_Heading_Depth_UTurns"
 # STEP 3 - START LOG FILE
 
 # Sink output to file
-rout <- file( file.path(wdir,project_folder,"Data","1.Hypack_Data_Parser.log"), 
+rout <- file( file.path(wdir,project_folder,"1.Hypack_Data_Parser.log"), 
               open="wt" )
 sink( rout, split = TRUE ) # display output on console and send to log file
 sink( rout, type = "message" ) # send warnings to log file
@@ -269,15 +270,17 @@ hypack_files <- list.files(pattern = ".RAW", path = hypack_path, full.names = T)
 # Apply function across list of input files
 all_list <- future_lapply(hypack_files, FUN=extractHypack, future.seed=42)
 
-#Normally data field are columns X4 and X5, but HCP device types can have column X6. If not all files from a survey
-#have an HCP device active, add dummy values to column X6, so that the rbind process below can complete successfully.
+
+# Normally data field are columns X4 and X5, but HCP and TID can have column X6
+# If not all files from a survey have an HCP device active, add dummy values to 
+# column X6, so that the rbind process below can complete successfully.
 for(i in 1:length(all_list)){
   if(is.null(all_list[[i]]$X6)){
-    X6 <- rep(NA, length(all_list[[i]]$ID))  
-    all_list[[i]] <- bind_cols(all_list[[i]], X6)
-    }
+    all_list[[i]]$X6 <- rep(NA, length(all_list[[i]]$ID))  
+  }
 }
-  
+
+# Bind list of tables into single dataframe
 dat <- do.call("rbind", all_list)
 
 
@@ -374,8 +377,10 @@ positions <- positions[!duplicated(positions$Datetime),]
 positions <- positions[order(positions$Datetime),]
 # Plot, look for tight relationship between position sensor data
 # Primary v secondary
-plot(positions$Beacon_Easting, positions$Beacon_Easting2)
-abline(a=0, b=1, col="red")
+if (!is.null(pos_secondary)){
+  plot(positions$Beacon_Easting, positions$Beacon_Easting2)
+  abline(a=0, b=1, col="red")
+}
 # Primary v ship
 plot(positions$Beacon_Easting, positions$Ship_Easting)
 abline(a=0, b=1, col="red")
@@ -463,6 +468,8 @@ pos <- positions[c("Datetime", "Beacon_Source", "Beacon_Gaps",
 # Summary
 print(summary(pos))
 
+# Write csv
+write.csv(pos, file = paste0(save_dir, "/Hypack_GPS_positions.csv"))
 
 #=============#
 #   Heading   #
@@ -482,7 +489,9 @@ names(ship_heading_data)[1] <- "Ship_heading"
 headings <- merge(rov_heading_data, ship_heading_data, by="Datetime", all=T)
 # Assign NA to all negative values
 headings$ROV_heading[ headings$ROV_heading < 0 ] <- NA
+headings$ROV_heading[ headings$ROV_heading > 360 ] <- NA
 headings$Ship_heading[ headings$Ship_heading < 0 ] <- NA
+headings$Ship_heading[ headings$Ship_heading > 360 ] <- NA
 # Remove duplicated
 headings <- headings[!duplicated(headings$Datetime),]
 # Summary
@@ -505,7 +514,7 @@ names(altitude_data)[1] <- "Altitude_m"
 }
 # Assign NA to all negative values
 altitude_data$Altitude_m[ altitude_data$Altitude_m < 0 ] <- NA
-altitude_data$Altitude_m[ altitude_data$Altitude_m < 9.99 ] <- NA
+altitude_data$Altitude_m[ altitude_data$Altitude_m > 9.99 ] <- NA
 # Remove duplicated
 altitude <- altitude_data[!duplicated(altitude_data$Datetime),]
 # Summary
@@ -676,6 +685,7 @@ message( "\n", nrow(pl), " planned transects found in Hypack for ",
          project_folder, "\n")
 
 
+
 #===============================================================================
 # STEP 7 - READ IN DIVE LOG AND MERGE WITH SENSOR DATA
 
@@ -715,15 +725,17 @@ dlog[tnames] <- lapply( dlog[tnames], FUN=function(x) ymd_hms(x) )
 # transect annotations
 dlog$Start_UTC_pad <- dlog$Start_UTC - minutes(padtime)
 dlog$End_UTC_pad <- dlog$End_UTC + minutes(padtime)
+# Sort dlog by datetime
+dlog <- dlog[order(dlog$Start_UTC),]
 # Crop padded times so there is no overlap between transects
-#for (i in 2:nrow(dlog)){
-#  if( dlog$End_UTC_pad[i-1] > dlog$Start_UTC_pad[i] ){
-#    # Replace end times with non-padded times
-#    dlog$End_UTC_pad[i-1] <- dlog$End_UTC[i-1]
-#    # Set start time to previous endtime 
-#    dlog$Start_UTC_pad[i] <- dlog$End_UTC[i-1]
-#  }
-#}
+for (i in 2:nrow(dlog)){
+ if( dlog$End_UTC_pad[i-1] > dlog$Start_UTC_pad[i] ){
+   # Replace end times with non-padded times
+   dlog$End_UTC_pad[i-1] <- dlog$End_UTC[i-1]
+   # Set start time to previous endtime
+   dlog$Start_UTC_pad[i] <- dlog$End_UTC[i-1]
+ }
+}
 # Generate by second sequence of datetimes from start to end of transects 
 slog <- NULL
 for(i in 1:nrow(dlog)){

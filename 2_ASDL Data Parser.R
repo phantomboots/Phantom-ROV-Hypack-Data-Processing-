@@ -93,16 +93,19 @@ plan(multisession)
 wdir <- getwd() 
 
 # Enter Project folder name
-project_folder <- "Pac2021-054_phantom"
+project_folder <- "Pac2022-036_phantom"
 
 # Directory where the ASDL files are stored
 # Path must start from your working directory, check with getwd(), or full paths
-ASDL_dir <- file.path(wdir, project_folder, "Data/Advanced_Serial_Data_Logger")
+ASDL_dir <- file.path(wdir, project_folder, "ASDL_Backup")
 
 # Set the directory for saving of the master files.
 # Path must start from your working directory, check with getwd(), or full paths
-save_dir <- file.path(wdir, project_folder, "Data/2.ASDL_Processed_Data")
+save_dir <- file.path(wdir, project_folder, "2.ASDL_Processed_Data")
 dir.create(save_dir, recursive = TRUE) # Will warn if already exists
+
+# Beacon ID number for ROV beacon? (not clump beacon)
+ROV_beacon <- 1
 
 # Offset values for IMUs located in the Phantom's subsea can and on the MiniZeus
 # An offset of zero means is measure the expect 90 degrees when perpendicular 
@@ -124,7 +127,7 @@ convert_depth <- TRUE
 # STEP 2 - START LOG FILE
 
 # Sink output to file
-rout <- file( file.path(wdir,project_folder,"Data","2.ASDL_Data_Parser.log" ), 
+rout <- file( file.path(wdir,project_folder,"2.ASDL_Data_Parser.log" ), 
               open="wt" )
 sink( rout, split = TRUE ) # display output on console and send to log file
 sink( rout, type = "message" ) # send warnings to log file
@@ -249,11 +252,14 @@ if( length(dh_files) > 0 ){
   ROV_all <- do.call("rbind", rovlist)
   # Rename
   names(ROV_all) <- c("Datetime", rov_order)
+  # Assign NA to erroneous heading values
+  ROV_all$ROV_heading[ ROV_all$ROV_heading <= 0 ] <- NA
+  ROV_all$ROV_heading[ ROV_all$ROV_heading > 360 ] <- NA
+  # Convert depth from feet to meters
+  if( convert_depth ) ROV_all$Depth_m <- ROV_all$Depth_m * 3.28084
   # Set depths below zero to zero
   ROV_all$Depth_m[ROV_all$Depth_m < 0] <- 0
-  # Convert depth from feet to meters
-  # Question: This was not done in previous version, should depth be in meters? 
-  if( convert_depth ) ROV_all$Depth_m <- ROV_all$Depth_m * 3.28084
+  ROV_all$Depth_m[ROV_all$Depth_m > 250] <- NA
   # Summary
   print(summary(ROV_all))
   # Check depth
@@ -516,7 +522,8 @@ if( length(IMU_files) > 0 ){
 
 # Computes the coordinates of each beacon using the X, Y distance and bearing 
 # from the hydrophone specified in the TrackMan master file and converts these 
-# to new Lat/Long positions for the vehicle.
+# to new Lat/Long positions for the vehicle. This doesn't take into account any
+# GPS offsets (the distance between the hydrophone pole and the GPS antenna).
 
 # Message
 message("\nCreating 'Manual_Beacon_Tracking_MasterLog.csv'", "\n")
@@ -531,6 +538,9 @@ if( !exists("GPS_all") ){
   GPS_all$Datetime <- ymd_hms(GPS_all$Datetime)
 }
 
+# Select only ROV beacon
+Track_all <- filter(Track_all, Beacon_ID == ROV_beacon)
+
 # Filter out TrackMan readings where no Distance or bad error codes
 TrackMan <- filter(Track_all, DistanceX_m != 0 &  DistanceY_m != 0 &
                      Error_Code == 0 | 
@@ -544,13 +554,12 @@ New_Tracking$Distance <- sqrt(New_Tracking$DistanceX_m^2 +
 New_Tracking <- New_Tracking[!is.na(New_Tracking$Latitude),]
 # Check
 hist(New_Tracking$Distance, breaks = 30)
-# Bearing, calculate from ships heading
-bearing <- New_Tracking$Ship_Heading + New_Tracking$Target_Bearing
-bearing[bearing > 360] <- bearing[bearing > 360] - 360
+
 # Generate new points with X,Y distance and bearing from existing Lat/Longs
 Beacon_Coords <- destPoint(p=New_Tracking[c("Longitude","Latitude")], 
-                           b=bearing, 
+                           b=New_Tracking$Target_Bearing, 
                            d=New_Tracking$Distance)
+
 # Slot the new Beacon tracking points back into New_Tracking DF
 New_Tracking$Beacon_Longitude <- Beacon_Coords[,1]
 New_Tracking$Beacon_Latitude <- Beacon_Coords[,2]
