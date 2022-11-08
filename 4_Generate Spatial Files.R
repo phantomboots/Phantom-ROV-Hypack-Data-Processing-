@@ -1,32 +1,18 @@
 #===============================================================================
 # Script Name: 4_Generate_KML_and_Shapefiles_Phantom.R
-# Script Function: This script reads in the .CSV files created from 
-#                 "3_QAQC_Interpolation_Offset_and_Data_Smoothing.R". Creates 
+# Script Function: This script reads in RData files created from 
+#                 "3_QAQC_Interpolate_Smooth.R". Creates spatial files for
 #                 Hypack Planned lines, GPS tracks, and unsmoothed/smoothed 
-#                 transponder fixes are written to .KML and .SHP files. 
-#                 Shapefiles include a spatial lines file, as well as Spatial 
-#                 Points file for each dive. The Spatial Points file contains
-#                 all collected data, which is written to the attribute table 
-#                 for the file. Spatial lines .SHP are generated from both the 
-#                 running median and LOESS smoothing of the Lat/Longs. Spatial 
-#                 Points .SHP are generated from the LOESS data only (i.e. 
-#                 generally the more accurate of the two smoothing functions).
+#                 transponder fixes in .KML and .SHP formats. Shapefiles include 
+#                 a spatial lines file, as well as Spatial Points file for each 
+#                 dive. The Spatial Points file contains all collected data, 
+#                 which is written to the attribute table Spatial lines are 
+#                 generated from both the running median and LOESS smoothers. 
+#                 Spatial Points .SHP are generated from the LOESS data only.
 #
 # Script Author: Ben Snow, adapted by Jessica Nephin
 # Script Date: Jul 2, 2020 adapted in Feb 2022
-# R Version: 3.5.1, version 4.0.2
-
-
-################################################################################
-#                                 CHANGE LOG                                   #
-################################################################################
-#
-# Jan 2022: - Moved processing of hypack raw files for planned transects to #1
-#           - Wrote function for creating sp lines
-#           - Reduced the number of ind files by exporting all points together
-#           - Wrote function for spatial file export
-#           - Can export line as dives or transects
-################################################################################
+# R Version: 4.0.2
 
 
 
@@ -53,10 +39,10 @@ lapply(packages, require, character.only = TRUE)
 wdir <- getwd() 
 
 # Project folder
-project_folder <- "Pac2022-036_phantom"
+project_folder <- "Pac2021-036_boots"
 
 # Name of Ship used in the survey
-ship_name <- "Vector"
+ship_name <- "Tully"
 
 # Directories where final processed data are stored
 imports_dir <- file.path(wdir, project_folder, "3.Final_Processed_Data")
@@ -208,3 +194,4 @@ exportSpatial(Planned_Lines, "Planned_Transects", edriver)
 
 # Write points as shapefile
 exportSpatial(Loess_Points, "ROV_Loess_Points", edriver)
+

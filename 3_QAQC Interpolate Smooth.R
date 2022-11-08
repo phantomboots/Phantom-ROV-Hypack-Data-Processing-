@@ -1,80 +1,16 @@
 #===============================================================================
 # Script Name: 3_QAQC_Interpolate__Smooth.R
 # Function: This script reads in the .CSV files created from "1_Hypack Data 
-#           Parser_****.R', "2_ASDL Data Processing.R' and"2b_Manual Beacon 
-#           Position Calculator.R". It fills in the best position and depth data 
-#           source for each dive, and interpolates Lat/Longs for Ship GPS 
-#           position and vehicle beacon. Next, distance to GPS track is 
-#           calculated for each beacon point, and points outside of median+2.5 *
-#           IQRare identified as outliers, and beacon fixes at these time points 
-#           are removed. Beacon positions are interpolated a second time (with 
-#           outliers removed). Beacon positions are then smoothed using a 
-#           rolling median (overlapping medians), using stats::runmed(). 
-#           Bandwidth is set in the 'STEP 1' portion of these scripts. 
-#           Final data for each dive are written to .CSV.
+#           Parser.R', "2_ASDL Data Parser ****.R'. It combined hypack, ASDL and
+#           CTD data outputs, filling in any gaps with the preferred and existing
+#           backup data sources. Several quality control checks are completed. 
+#           Lat/Longs for ship and vehicle beacon position are filtered and
+#           interpolated. Filters are applied to x,y positions to remove 
+#           potentially erroneous fixes. ROV beacon positions are then smoothed.
 #
 # Script Author: Ben Snow, adapted by Jessica Nephin
-# Script Date: Sep 9, 2019 adapted in Feb 2022
-# R Version: 3.5.1, version 4.0.2
-
-
-################################################################################
-#                                    CHANGE LOG                                #
-################################################################################
-#
-# May 13, 2020: Based on conversations with J.Nephin and S. Jeffery, decided to 
-#               add linear interpolation of the depth data stream. Depth record 
-#               completion now checks ASDL to see if additional data records can 
-#               be found.
-# May 24, 2020: Added a check to see if there were additional records that could 
-#               be recovered from ASDL for Altitude and Slant Range. FOR 2019 
-#               ONLY, added loop to pull Bottom_Velocity_Y (forward velocity). 
-#               For some dives in 2019, the 3D dimensional velocity had been 
-#               recorded by Hypack, rather then simply forward velocity. Added 
-#               linear interpolation of Slant Range and Altitude, but only for 
-#               cases where there is just one NA value in a row. This is done by 
-#               setting zoo::na.approx(..., maxgap = 1).
-# June 3, 2020: Reworked the initial loop that checks ASDL to replace NA values 
-#               from the Hypack read-in. This was previously only working 
-#               properly for the positional data streams (it checked that GAPS 
-#               == T for all data, not just position)
-# June 3, 2020: In some cases, interpolation of a -9999 and a normal Altitude or
-#               Slant Range values produced values in the range of -4000 or 
-#               -5000. These is now a check against this, and values are reset 
-#               to -9999 after interpolation.
-# July 2, 2020: Removed the portion of this script that was previously used to 
-#               generate .KML and .SHP files, and put it in a new script called
-#               "4b_Generate_KML_and_Shapefiles.R"
-# Aug 20, 2021: Added if() statement to check if the manual beacon tracking 
-#               script has been run, before trying to interpolate from this data 
-#               source. If this script has not been run, skip this portion.
-# Jan 2022: - Wrote function for filling gaps
-#           - Applied function to each ASDL source used for filling gaps
-#           - Returns number of gaps detected and filled each time
-#           - Fixed speed unit error, used to replace knots with m/s
-#           - Check the relationship between variables in tofill and forfilling
-#             before filling gaps
-#           - Question: what to do when relationship is bad, don't fill?
-#             eg. speed_kts
-#           - attempted to make code more explicit, removed use of column order
-#           - rewrote offset section to fix issue with if statements, need to
-#             confirm it is working as intended
-#           - Using distGeo instead of distm function for step 7
-#           - Only removing upper qauntile outliers (not lower)
-#           - added log file
-#           - saves transect maps to file comparing rov and ship positions
-#           - exports all transects and each transect NAV files to csv
-#           - removed ship_name as it wasn't used
-#           - added original script 4 to this script to reduce # of steps
-#           - uses RBR CTD data from excel files first, then ASDL backup second
-#           - longlat rounded to 6th decimal place
-#           - renamed some attributes
-#           - doesn't use ship pos to fill gaps in beacon
-#           - check ships pos for outliers (greater than 25m between pos)
-#           - outlier cutoff too sensitive, changed to 2.5 IQR
-# Oct 2022: - Move offset part to step 4, and only used if offsets were not applied
-#             or applied incorrectly in hypack 
-################################################################################
+# Script Date: Sep 9, 2019 adapted in Nov 2022
+# R Version: version 4.0.2
 
 
 
@@ -103,13 +39,21 @@ options(digits = 12)
 wdir <- getwd() 
 
 # Project folder
-project_folder <- "PAC2022-036_phantom"
+project_folder <- "Pac2021-036_boots"
+
+# ROV type
+# phantom or boots
+rov <- "boots"
+
+# CTD type
+# RBR and SBE
+ctd <- "SBE"
 
 # Directory where Hypack processed data are stored
 hypack_path <- file.path(wdir, project_folder, "1.Hypack_Processed_Data")
 
-# Directory where RBR CTD excel files are stored
-RBR_path <- file.path(wdir, project_folder, "RBR")
+# Directory where CTD files are stored
+CTD_path <- file.path(wdir, project_folder, "SBE25")
 
 # Directory with ASDL master files
 ASDL_path <- file.path(wdir, project_folder, "2.ASDL_Processed_Data")
@@ -120,46 +64,35 @@ dir.create(final_dir, recursive = TRUE) # Will warn if already exists
 fig_dir <- file.path(wdir, project_folder, "3.Figures")
 dir.create(fig_dir, recursive = TRUE) # Will warn if already exists
 
-# Specify offsets for ship GPS source if the offsets were not set in hypack.
-# Offset to the port side are positive values for 'GPS_abeam' and offset towards 
-# the bow are positive for 'GPS_along'.
+# Specify offsets for ship GPS source if the offsets were not set, or not set
+# correctly in hypack. Offset to the port side are positive values for
+# 'GPS_abeam' and offset towards the bow are positive for 'GPS_along'.
 offsets <- FALSE # FALSE is no offsets need to be applied, default
-# GPS_abeam <- -4.1
-# GPS_along <- -12.57
+# GPS_abeam <- 0
+# GPS_along <- 2
 
 # Do you want to use manual trackman ROV position as a backup ROV position?
 # TRUE for yes, FALSE for no
-trackman <- TRUE
+trackman <- FALSE
 
 # Set the value to use for the 'window' size (in seconds) of the running median 
-# smoothing of the beacon position. Must be odd number!
-smooth_window <- 31
+# smoothing of the beacon position. Must be odd number! Typically from 31 to 301
+smooth_window <- 301
 
 # Set the LOESS span values. This is a parameter that described the proportion 
 # of the total data set to use when weighting (e.g. span = 0.05 would use 5% 
-# of the total data set as the local weighting window).
+# of the total data set as the local weighting window). Typically from .02 to .1 
 loess_span = 0.05
 
 # Set the maximum distance (in meters) that can occur between the ROV and ship
 # Will differ depending on the ROV
-# Question - what is this distance for phantom (100m) and boots (1000m)?
-max_dist <- 100
+# Question - what is this distance for phantom (200m) and boots (500m)?
+max_dist <- 500
 
-
-# Fields to include in final processed files
-flds <- c("Datetime","Dive_Name", "Transect_Name", "Dive_Phase", 
-          "ROV_Longitude_loess", "ROV_Latitude_loess", "ROV_Longitude_smoothed", 
-          "ROV_Latitude_smoothed", "ROV_Longitude_unsmoothed", 
-          "ROV_Latitude_unsmoothed", "ROV_Source", "Ship_Longitude", 
-          "Ship_Latitude", "Depth_m", "Depth_Source", "ROV_heading", 
-          "Ship_heading", "Speed_kts", "Altitude_m", "Slant_range_m", 
-          "Rogue_pitch", "Rogue_roll", "MiniZeus_zoom_percent",
-          "MiniZeus_focus_percent", "MiniZeus_aperture_percent", 
-          "MiniZeus_pitch","MiniZeus_roll","ROV_pitch","ROV_roll",
-          "Conductivity_mS_cm", "Temperature_C", "Pressure_dbar", 
-          "DO_Sat_percent", "Sea_Pressure_dbar", "Salinity_PSU", 
-          "Sound_Speed_m_s", "Specific_Cond_uS_cm", "Density_kg_m3", 
-          "DO_conc_mgL")
+# Slant range and altimeter cut-offs. 
+# What is are the maximum possible values in meters?
+slant_max <- 50
+alititude_max <- 20
 
 
 #===============================================================================
@@ -177,66 +110,39 @@ sTime <- Sys.time( )
 
 # Messages
 message("QAQC ", project_folder, " project data on ", Sys.Date(), "\n\n")
-# message( "GPS abeam distance = ", GPS_abeam)
-# message( "GPS along distance = ", GPS_along)
+if ( offsets ) message( "GPS abeam distance = ", GPS_abeam)
+if ( offsets ) message( "GPS along distance = ", GPS_along)
 message( "Smoothing window = ", smooth_window)
 message( "loess span = ", loess_span)
-message( "Maximum allowable distance between ship and ROV = ", max_dist, "\n\n")
+message( "Maximum allowable distance between ship and ROV = ", max_dist, "\n")
 
 
 #===============================================================================
-# STEP 3 - READ IN THE HYPACK AND ASDL PROCESSED DATA, AND RBR EXCEL FILES
+# STEP 3 - READ IN THE HYPACK AND ASDL PROCESSED DATA
 
-# Read all Master Log files
-Slant_Range_Master <- read.csv(file.path(ASDL_path,"Tritech_SlantRange_MasterLog.csv"))
-Slant_Range_Master$Datetime <- ymd_hms(Slant_Range_Master$Datetime)
-Manual_Track_Master <- read.csv(file.path(ASDL_path,"Manual_Beacon_Tracking_MasterLog.csv"))
-Manual_Track_Master$Datetime <- ymd_hms(Manual_Track_Master$Datetime)
-Manual_Track_Master$ID <- "Manual tracking backup"
-Hemisphere_Master <- read.csv(file.path(ASDL_path,"Hemisphere_GPS_MasterLog.csv"))
-Hemisphere_Master$Datetime <- ymd_hms(Hemisphere_Master$Datetime)
-Hemisphere_Master$ID <- "Ship GPS backup"
-Ship_Heading_Master <- read.csv(file.path(ASDL_path,"Hemisphere_Heading_MasterLog.csv"))
-Ship_Heading_Master$Datetime <- ymd_hms(Ship_Heading_Master$Datetime)
-DVL_Master <- read.csv(file.path(ASDL_path,"ROWETECH_DVL_MasterLog.csv"))
-DVL_Master$Datetime <- ymd_hms(DVL_Master$Datetime)
-ROV_Heading_Depth_Master <- read.csv(file.path(ASDL_path,"ROV_Heading_Depth_MasterLog.csv"))
-ROV_Heading_Depth_Master$Datetime <- ymd_hms(ROV_Heading_Depth_Master$Datetime)
-ROV_Heading_Depth_Master$ID <- "ROV Heading Depth ASDL"
-RBR_Master <- read.csv(file.path(ASDL_path,"RBR_CTD_MasterLog.csv"))
-RBR_Master$Datetime <- ymd_hms(RBR_Master$Datetime)
-RBR_Master$ID <- "RBR CTD ASDL"
-MiniZeus_ZFA_Master <- read.csv(file.path(ASDL_path,"MiniZeus_ZFA_MasterLog.csv"))
-MiniZeus_ZFA_Master$Datetime <- ymd_hms(MiniZeus_ZFA_Master$Datetime)
-ROV_MiniZeus_IMUS_Master <- read.csv(file.path(ASDL_path,"Zeus_ROV_IMU_MasterLog.csv"))
-ROV_MiniZeus_IMUS_Master$Datetime <- ymd_hms(ROV_MiniZeus_IMUS_Master$Datetime)
 
-# Read in RBR data from .xlsx files
-# Create blank data frame to fill in the loop below.
-RBR_Data <- data.frame()
-# Read in all RBR .xlsx files in the directory, merge into one larger dataframe
-RBR_files <- list.files(path=RBR_path, pattern = ".xlsx", full.names = T)
-for(i in RBR_files){
-  # High max guess range, sometimes there are many rows missing at beginning
-  tmp <- read_xlsx(i, sheet = "Data", skip = 1, guess_max = 10000)
-  RBR_Data <- bind_rows(RBR_Data, tmp)
-}
-# Rename
-names(RBR_Data) <- c("Datetime", "Conductivity_mS_cm", "Temperature_C",
-                     "Pressure_dbar", "DO_Sat_percent", "Sea_Pressure_dbar",
-                     "Depth_m", "Salinity_PSU", "Sound_Speed_m_s",
-                     "Specific_Cond_uS_cm", "Density_kg_m3", "DO_conc_mgL")
-# Add source ID
-RBR_Data$ID <- "RBR CTD XLS"
-# Summary 
-message("RBR data summary from merged excel files:")
-print(summary(RBR_Data))
-# Check to see if the RBR data is from year 2000 (default in system)
-if ( any(year(RBR_Data$Datetime) == 2000) ){
-  warning("RBR year is incorrect!! No RBR CTD data with match up.")
+# List of all potentially existing ASDL files to load
+asdl_files <- c('Hemisphere_GPS','Hemisphere_Heading','Manual_Beacon_Tracking',  
+                'Tritech_SlantRange','BOOTS_string','Imagenex_Atlimeter', 'CTD', 
+                'MiniZeus_ZFA','ROWETECH_DVL','ROV_Heading_Depth','Zeus_ROV_IMU')
+
+# Load ASDL files
+for( f in asdl_files){
+  filepath <- file.path(ASDL_path,paste0(f, "_MasterLog.csv"))
+  if( file.exists(filepath) ){
+    tmp <- read.csv(filepath)
+    tmp$Datetime <- ymd_hms(tmp$Datetime)
+    tmp$ID <- paste0(f, ' ASDL') 
+  } else {
+    # Empty dataframe if ASDL file does not exist
+    tmp <- data.frame(Datetime=NA)
+  }
+  name <- paste0(f, '_Master')
+  assign(name, tmp)
 }
 
-# Read in transect data processed at a 1Hz from Hypack (named: dat)
+
+# Load transect data processed at a 1Hz from Hypack (named: dat)
 load(file=file.path(hypack_path, "HypackData_bySecond.RData"))
 
 # Is hypack data by transect or by dive?
@@ -246,11 +152,71 @@ if( any(dat$Dive_Phase == 'Off_transect') ) {
 } else {
   grp <- "Transect_Name"
 }
+message('Hypack data processed by: ', grp, '\n')
+
+
+#===============================================================================
+# STEP 4 - LOAD CTD DATA
+
+# For RBR CTD data
+if (ctd == 'RBR'){
+  # Read in RBR data from .xlsx files
+  # Create blank data frame to fill in the loop below.
+  CTD_Data <- data.frame()
+  # Read in all RBR .xlsx files in the directory, merge into one larger dataframe
+  RBR_files <- list.files(path=CTD_path, pattern = ".xlsx", full.names = T)
+  for(i in RBR_files){
+    # High max guess range, sometimes there are many rows missing at beginning
+    tmp <- read_xlsx(i, sheet = "Data", skip = 1, guess_max = 10000)
+    CTD_Data <- bind_rows(CTD_Data, tmp)
+  }
+  # Rename
+  names(CTD_Data) <- c("Datetime", "Conductivity_mS_cm", "Temperature_C",
+                       "Pressure_dbar", "DO_Sat_percent", "Sea_Pressure_dbar",
+                       "Depth_m", "Salinity_PSU", "Sound_Speed_m_s",
+                       "Specific_Cond_uS_cm", "Density_kg_m3", "DO_conc_mgL")
+  # Remove duplicate datetimes
+  CTD_Data <- CTD_Data[!duplicated(CTD_Data$Datetime),]
+  # Add source ID
+  CTD_Data$ID <- "RBR CTD XLS"
+  # Summary 
+  message("RBR data summary from merged excel files:")
+  print(summary(CTD_Data))
+  # Check to see if the RBR data is from year 2000 (default in system)
+  if ( any(year(CTD_Data$Datetime) == 2000) ){
+    warning("RBR year is incorrect!! No RBR CTD data with match up.")
+  }
+}
+
+# For SBE CTD data
+if (ctd == 'SBE'){
+  # Read in SBE data from .asc files
+  # Create blank data frame to fill in the loop below.
+  CTD_Data <- data.frame()
+  # Read in all SBE .asc files in the directory, merge into one larger dataframe
+  SBE_files <- list.files(path=CTD_path, pattern = ".asc", full.names = T)
+  for(i in SBE_files){
+    tmp <- read.csv(i)
+    CTD_Data <- bind_rows(CTD_Data, tmp)
+  }
+  # Datetime
+  CTD_Data$Datetime <- mdy_hms(paste(CTD_Data$mm.dd.yyy, CTD_Data$hh.mm.ss))
+  # Re-order
+  CTD_Data <- CTD_Data[c(15,5:12)]
+  # Rename
+  names(CTD_Data) <- c("Datetime", "Depth_m","Temperature_C","Conductivity_mS_cm",
+                       "Density_kg_m3","Salinity_PSU","Sound_Speed_m_s",
+                       "DO_Sat_mlL","SBE43_02Conc")
+  # Remove duplicate datetimes
+  CTD_Data <- CTD_Data[!duplicated(CTD_Data$Datetime),]
+  # Add source ID
+  CTD_Data$ID <- "SBE CTD ASC"
+}
 
 
 
 #===============================================================================
-# STEP 4 - APPLY OFFSETS TO HYPACK BEACON POSITION DATA
+# STEP 5 - APPLY OFFSETS TO HYPACK BEACON POSITION DATA
 
 # Calculate the bearing and distance for offset calculations using GPS_abeam and
 # GPS_along offsets. Offset for the antenna to the port side are (+) for 
@@ -319,8 +285,9 @@ if (offsets){
   dat$Beacon_Latitude <- offset_calc[,2]
 } 
 
+
 #===============================================================================
-# STEP 5 - USE ASDL AND RBR TO FILL IN HYPACK DATA GAPS 
+# STEP 6 - USE ASDL AND RBR TO FILL IN HYPACK DATA GAPS 
 
 # Function to fill gaps
 # Arguments:
@@ -360,9 +327,9 @@ fillgaps <- function(tofill, forfilling, type="", sourcefields, fillfields ){
     stillgaps <- which(is.na(tofill[[field]]))
   }
   # Message
-  message( "\n", length(gapstofill), " gaps detected in ", field, "\n",
+  message( length(gapstofill), " gaps detected in ", field, "\n",
            length(stillgaps), " gaps remain after filling with ", 
-           fillfields[1], "\n")
+           fillfields[1], "\n\n")
   # Return
   return(tofill)
 }
@@ -371,9 +338,8 @@ fillgaps <- function(tofill, forfilling, type="", sourcefields, fillfields ){
 #===============#
 #    POSITION   #
 #===============#
-
 # Compare hypack and manual tracking backup beacon positions by dive
-tmp <- merge(dat, Manual_Track_Master, by="Datetime")
+tmp <- merge(dat, Manual_Beacon_Tracking_Master, by="Datetime")
 # Map each dive
 for (i in unique(dat$Dive_Name)){
   ot <- dat[dat$Dive_Name == i,]
@@ -393,12 +359,15 @@ for (i in unique(dat$Dive_Name)){
 if ( trackman ){
   message( "Filling position with TrackMan manual ROV GPS:")
   dat <- fillgaps(tofill=dat,
-                  forfilling=Manual_Track_Master,
+                  forfilling=Manual_Beacon_Tracking_Master,
                   type = "pos",
                   sourcefields=c("Beacon_Longitude", "Beacon_Latitude", 
                                  "Beacon_Source"),
                   fillfields=c("Beacon_Longitude", "Beacon_Latitude", "ID") )
 }
+
+# Could fill ship position with hemisphere ASDL backup here
+
 
 #==============#
 #    HEADING   #
@@ -413,12 +382,21 @@ dat <- fillgaps(tofill=dat,
                 sourcefields="ROV_heading",
                 fillfields="ROV_heading" )
 # Check for relationship between tofill and forfilling
-tmp <- merge(dat, Ship_Heading_Master, by="Datetime")
+tmp <- merge(dat, BOOTS_string_Master, by="Datetime")
+if(nrow(tmp) > 0) plot(tmp$ROV_heading.x, tmp$ROV_heading.y)
+# Fill gaps in ROV heading with 'BOOTS_string_MasterLog.csv'
+message( "Filling ROV heading with 'BOOTS_string_MasterLog.csv':")
+dat <- fillgaps(tofill=dat,
+                forfilling=BOOTS_string_Master,
+                sourcefields="ROV_heading",
+                fillfields="ROV_heading" )
+# Check for relationship between tofill and forfilling
+tmp <- merge(dat, Hemisphere_Heading_Master, by="Datetime")
 if(nrow(tmp) > 0) plot(tmp$Ship_heading.x, tmp$Ship_heading.y)
 # Fill gaps in ships heading with 'Hemisphere_Heading_MasterLog.csv'
 message( "Filling ship heading with 'Hemisphere_Heading_MasterLog.csv':")
 dat <- fillgaps(tofill=dat,
-                forfilling=Ship_Heading_Master,
+                forfilling=Hemisphere_Heading_Master,
                 sourcefields="Ship_heading",
                 fillfields="Ship_heading" )
 # Check
@@ -430,33 +408,44 @@ plot(dat$Ship_heading)
 #     DEPTH    #
 #==============#
 # Check for relationship between tofill and forfilling
-tmp <- merge(dat, RBR_Data, by="Datetime")
+tmp <- merge(dat, CTD_Data, by="Datetime")
 if(nrow(tmp) > 0) plot(tmp$Depth_m.x, tmp$Depth_m.y)
-# Fill gaps in depth with 'ROV_Heading_Depth_MasterLog.csv'
-message( "Filling depth with RBR CTD data:")
+# Fill gaps in depth with 'CTD_MasterLog.csv'
+message( "Filling depth with CTD data:")
 dat <- fillgaps(tofill=dat,
-                forfilling=RBR_Data,
+                forfilling=CTD_Data,
                 sourcefields=c("Depth_m","Depth_Source"),
                 fillfields=c("Depth_m","ID"))
 # Check for relationship between tofill and forfilling
-tmp <- merge(dat, RBR_Master, by="Datetime")
+tmp <- merge(dat, CTD_Master, by="Datetime")
 if(nrow(tmp) > 0) plot(tmp$Depth_m.x, tmp$Depth_m.y)
 # Fill gaps in depth with 'ROV_Heading_Depth_MasterLog.csv'
-message( "Filling depth with RBR CTD backup:")
+message( "Filling depth with CTD ASDL backup:")
 dat <- fillgaps(tofill=dat,
-                forfilling=RBR_Master,
+                forfilling=CTD_Master,
                 sourcefields=c("Depth_m","Depth_Source"),
                 fillfields=c("Depth_m","ID"))
 # Check for relationship between tofill and forfilling
 tmp <- merge(dat, ROV_Heading_Depth_Master, by="Datetime")
 # filter out depth error from Master
 if(nrow(tmp) > 0) plot(tmp$Depth_m.x, tmp$Depth_m.y)
-# # Fill remaining gaps in depth with 'ROV_Heading_Depth_MasterLog.csv'
-# message( "Filling depth with 'ROV_Heading_Depth_MasterLog.csv':")
-# dat <- fillgaps(tofill=dat,
-#                 forfilling=ROV_Heading_Depth_Master,
-#                 sourcefields=c("Depth_m","Depth_Source"),
-#                 fillfields=c("Depth_m","ID"))
+# Fill remaining gaps in depth with 'ROV_Heading_Depth_MasterLog.csv'
+message( "Filling depth with 'ROV_Heading_Depth_MasterLog.csv':")
+dat <- fillgaps(tofill=dat,
+                forfilling=ROV_Heading_Depth_Master,
+                sourcefields=c("Depth_m","Depth_Source"),
+                fillfields=c("Depth_m","ID"))
+# Check for relationship between tofill and forfilling
+tmp <- merge(dat, BOOTS_string_Master, by="Datetime")
+# filter out depth error from Master
+if(nrow(tmp) > 0) plot(tmp$Depth_m.x, tmp$Depth_m.y)
+# Fill remaining gaps in depth with 'ROV_Heading_Depth_MasterLog.csv'
+message( "Filling depth with 'BOOTS_string_MasterLog.csv':")
+dat <- fillgaps(tofill=dat,
+                forfilling=BOOTS_string_Master,
+                sourcefields=c("Depth_m","Depth_Source"),
+                fillfields=c("Depth_m","ID"))
+
 # Check
 plot(dat$Depth_m)
 
@@ -465,75 +454,87 @@ plot(dat$Depth_m)
 #    SLANT RANGE   #
 #==================#
 # Check for relationship between tofill and forfilling
-tmp <- merge(dat, Slant_Range_Master, by="Datetime")
+tmp <- merge(dat, Tritech_SlantRange_Master, by="Datetime")
 if(nrow(tmp) > 0) plot(tmp$Slant_range_m.x, tmp$Slant_range_m.y)
 # Fill gaps in slant range with 'Tritech_SlantRange_MasterLog.csv'
 message( "Filling slant range with Tritech backup:")
 dat <- fillgaps(tofill=dat,
-                forfilling=Slant_Range_Master,
+                forfilling=Tritech_SlantRange_Master,
                 sourcefields="Slant_range_m",
                 fillfields="Slant_range_m" )
 # Check
 plot(dat$Slant_range_m)
 
+
 #===============#
 #    ALTITUDE   #
 #===============#
 # Check for relationship between tofill and forfilling
-tmp <- merge(dat, DVL_Master, by="Datetime")
+tmp <- merge(dat, ROWETECH_DVL_Master, by="Datetime")
 if(nrow(tmp) > 0) plot(tmp$Altitude_m.x, tmp$Altitude_m.y)
 # Fill gaps in altitude with 'ROWETECH_DVL_MasterLog.csv'
 message( "Filling altitude with DVL backup:")
 dat <- fillgaps(tofill=dat,
-                forfilling=DVL_Master,
+                forfilling=ROWETECH_DVL_Master,
+                sourcefields="Altitude_m",
+                fillfields="Altitude_m" )
+# Check for relationship between tofill and forfilling
+tmp <- merge(dat, Imagenex_Atlimeter_Master, by="Datetime")
+if(nrow(tmp) > 0) plot(tmp$Altitude_m.x, tmp$Altitude_m.y)
+# Fill gaps in altitude with 'Imagenex_Atlimeter_MasterLog.csv'
+message( "Filling altitude with Imagenex backup:")
+dat <- fillgaps(tofill=dat,
+                forfilling=Imagenex_Atlimeter_Master,
                 sourcefields="Altitude_m",
                 fillfields="Altitude_m" )
 # Check
 plot(dat$Altitude_m)
 
+
+
 #==============#
 #     SPEED    #
 #==============#
 # Check for relationship between tofill and forfilling
-tmp <- merge(dat, DVL_Master, by="Datetime")
+tmp <- merge(dat, ROWETECH_DVL_Master, by="Datetime")
 if(nrow(tmp) > 0) plot(tmp$Speed_kts.x, tmp$Speed_kts.y)
 # Fill gaps in speed with 'ROWETECH_DVL_MasterLog.csv'
 message( "Filling speed with DVL backup:")
 dat <- fillgaps(tofill=dat,
-                forfilling=DVL_Master,
+                forfilling=ROWETECH_DVL_Master,
                 sourcefields="Speed_kts",
                 fillfields="Speed_kts" )
-
 
 
 #===============================================================================
 # STEP 6 - ADD ASDL and RBR CTD DATA NOT IN HYPACK DATA 
 
 # Merge MiniZeus fields
-dat <- left_join(dat, MiniZeus_ZFA_Master, by = "Datetime")
-dat <- left_join(dat, ROV_MiniZeus_IMUS_Master, by = "Datetime")
-dat <- left_join(dat, RBR_Data[!names(RBR_Data) %in% c("Depth_m","ID")], 
-                 by = "Datetime")
+dat <- merge(dat, MiniZeus_ZFA_Master[names(MiniZeus_ZFA_Master) != "ID"], 
+                 by = "Datetime", all.x=T)
+dat <- merge(dat, Zeus_ROV_IMU_Master[names(Zeus_ROV_IMU_Master) != "ID"], 
+             by = "Datetime", all.x=T)
+dat <- merge(dat, BOOTS_string_Master[!names(BOOTS_string_Master) %in% 
+                        c("Longitude","Latitude","Depth_m","ROV_heading","ID")], 
+             by = "Datetime", all.x=T)
+dat <- merge(dat, CTD_Data[!names(CTD_Data) %in% c("Depth_m","ID")], 
+             by = "Datetime", all.x=T)
 
 # Use ASDL data to fill RBR CTD data gaps
 # Looks for gaps using the first field => Conductivity_mS_cm   
-message( "Filling RBR CTD gaps with ASDL RBR master backup:")
+message( "Filling CTD gaps with ASDL CTD master backup:")
+ctdfields <- names(CTD_Master)[!names(CTD_Master) %in% c("Depth_m","ID", "Datetime")]
+ctdfields <- ctdfields[ctdfields %in% names(dat)]
 dat <- fillgaps(tofill=dat,
-                forfilling=RBR_Master,
-                sourcefields=c("Conductivity_mS_cm", "Temperature_C",
-                               "Pressure_dbar", "DO_Sat_percent", 
-                               "Sea_Pressure_dbar", "Salinity_PSU", 
-                               "Sound_Speed_m_s", "Specific_Cond_uS_cm"),
-                fillfields=c("Conductivity_mS_cm", "Temperature_C",
-                             "Pressure_dbar", "DO_Sat_percent", 
-                             "Sea_Pressure_dbar", "Salinity_PSU", 
-                             "Sound_Speed_m_s", "Specific_Cond_uS_cm"))
+                forfilling=CTD_Master,
+                sourcefields=ctdfields,
+                fillfields=ctdfields)
 # Summary
 summary(dat)
 
 
 #===============================================================================
-# STEP 7 - INTERPOLATE TO FILL GAPS
+# STEP 8 - INTERPOLATE TO FILL GAPS
 
 # Interpolate function
 # Only interpolates if there are more than 2 non-NA values
@@ -567,17 +568,19 @@ variables <- c("Beacon_Longitude", "Beacon_Latitude", "Ship_Longitude",
 
 # Interpolate within each dive or transect by variable
 for (v in variables){
-  dat <- dat %>% group_by(.dots=grp) %>% 
+  dat <- dat %>% group_by(dplyr::across(grp)) %>% 
     group_modify(~interpGaps(.x, variable={{v}})) %>% as.data.frame()
 }
 # Summary
 message("\nSummary after variable gaps were filled with linear interpolation", "\n")
 print(summary(dat))
 
+
 # Set out of bound altitude and slant range to NA
 # > 20m for altitude and > 10m for slant range
-dat$Altitude_m[dat$Altitude_m > 20] <- NA
-dat$Slant_range_m[dat$Slant_range_m > 10] <- NA
+dat$Altitude_m[dat$Altitude_m > alititude_max] <- NA
+dat$Slant_range_m[dat$Slant_range_m > slant_max] <- NA
+
 
 # Add "interp" label to beacon source
 dat$Beacon_Source[is.na(dat$Beacon_Source)] <- "Interpolation"
@@ -590,7 +593,7 @@ names(dat) <- sub("Beacon_L","ROV_L", names(dat))
 
 
 #===============================================================================
-# STEP 8 - REMOVE SHIP AND ROV POSITION OUTLIERS
+# STEP 9 - REMOVE SHIP AND ROV POSITION OUTLIERS
 
 # Order dataframe by datetime
 dat <- dat[order(dat$Datetime),]
@@ -610,7 +613,7 @@ while( any(alongdist_ship > 5) ){
   }
   # Check
   message("\nWhile loop #", counter)
-  message("Summary of distance between adjacent ship positions", "\n")
+  message("Distance between adjacent ship positions", "\n")
   print(summary(alongdist_ship))
   # Check
   message("\nRemoved ", length(which(alongdist_ship > 5)) ,
@@ -623,7 +626,44 @@ while( any(alongdist_ship > 5) ){
   variables <- c("Ship_Longitude", "Ship_Latitude")
   # Interpolate within each dive or transect by variable
   for (v in variables){
-    dat <- dat %>% group_by(.dots=grp) %>% 
+    dat <- dat %>% group_by(dplyr::across(grp)) %>% 
+      group_modify(~interpGaps(.x, variable={{v}})) %>% as.data.frame()
+  }
+  # Number of loops counter
+  counter <- counter + 1
+} # End of while loop
+
+
+
+# Start while loop to remove outliers from ROV positions
+alongdist_rov <- 100
+counter <- 1
+while( any(alongdist_rov > 10) ){
+  # Calculate distance between adjacent points in ROV track
+  alongdist_rov <- c(0, geosphere::distGeo(
+    as.matrix(dat[1:(nrow(dat)-1), c("ROV_Longitude","ROV_Latitude")]),
+    as.matrix(dat[2:nrow(dat), c("ROV_Longitude","ROV_Latitude")])))
+  # Set distance to zero if between dives or transects
+  for(i in 2:nrow(dat)){
+    if( dat$Dive_Name[i-1] != dat$Dive_Name[i] ) alongdist_rov[i] <- 0
+    if( dat$Transect_Name[i-1] != dat$Transect_Name[i] ) alongdist_rov[i] <- 0
+  }
+  # Check
+  message("\nWhile loop #", counter)
+  message("Distance between adjacent ROV positions", "\n")
+  print(summary(alongdist_rov))
+  # Check
+  message("\nRemoved ", length(which(alongdist_rov > 10)) ,
+          " outliers greater than 10 m between along track ROV positions")
+  # Set long/lat values outside of range to NA
+  dat$ROV_Longitude[alongdist_rov > 10] <- NA
+  dat$ROV_Latitude[alongdist_rov > 10] <- NA
+  # Re-interpolate ROV long/lat values now that outliers have been removed
+  # Variables to interpolate
+  variables <- c("ROV_Longitude", "ROV_Latitude")
+  # Interpolate within each dive or transect by variable
+  for (v in variables){
+    dat <- dat %>% group_by(dplyr::across(grp)) %>% 
       group_modify(~interpGaps(.x, variable={{v}})) %>% as.data.frame()
   }
   # Number of loops counter
@@ -665,14 +705,14 @@ for (g in unique(dat[[grp]])){
 variables <- c("ROV_Longitude", "ROV_Latitude")
 # Interpolate within each dive or transect by variable
 for (v in variables){
-  dat <- dat %>% group_by(.dots=grp) %>% 
+  dat <- dat %>% group_by(dplyr::across(grp)) %>% 
     group_modify(~interpGaps(.x, variable={{v}})) %>% as.data.frame()
 }
 
 
 
 #===============================================================================
-# STEP 9 - APPLY LOESS AND RUNNING MEDIAN SMOOTHING TO ROV POSITION DATA 
+# STEP 10 - APPLY LOESS AND RUNNING MEDIAN SMOOTHING TO ROV POSITION DATA 
 
 # Smoothing function
 # Round values to the 6th decimal
@@ -692,7 +732,7 @@ smoothCoords <- function( x, variable ){
 variables <- c("ROV_Longitude", "ROV_Latitude")
 # Smooth using loess and window method within each dive or transect by variable
 for (v in variables){
-  dat <- dat %>% group_by(.dots=grp) %>% 
+  dat <- dat %>% group_by(dplyr::across(grp)) %>% 
     group_modify(~smoothCoords(.x, variable={{v}})) %>% as.data.frame()
 }
 
@@ -757,10 +797,17 @@ for (i in unique(dat$Dive_Name)){
 
 
 #===============================================================================
-# STEP 10 - WRITE FINAL PROCESSED DATA TO FILE
+# STEP 11 - WRITE FINAL PROCESSED DATA TO FILE
 
 # Final dataset
-fdat <- dat[flds]
+fdat <- dat[,names(dat) != 'Beacon_Gaps']
+fdat <- fdat %>% relocate(Datetime)
+fdat <- fdat %>% relocate(Transect_Name, .after = Dive_Name)
+fdat <- fdat %>% relocate(ROV_Longitude_loess,
+                         ROV_Longitude_smoothed,
+                         ROV_Latitude_loess,
+                         ROV_Latitude_smoothed, .after = ROV_Latitude_unsmoothed)
+names(fdat)
 
 # Save as Rdata
 save(fdat, file=file.path(final_dir, paste0(project_folder, 
@@ -770,14 +817,31 @@ write.csv(fdat, quote = F, row.names = F,
           file = file.path(final_dir, paste0(project_folder, 
                                              "_SensorData_Georeferenced.csv")))
 
-# Export by dive
-for (i in unique(fdat$Dive_Name)){
+# Export by dive or transect
+for (i in unique(fdat[[grp]]) ){
   tmp <- fdat[fdat$Dive_Name == i,]
   write.csv(tmp, quote = F, row.names = F,
             file = file.path(final_dir, 
-                             paste0(project_folder, "_", i, 
-                                    "_SensorData_Georeferenced_All_Transects.csv")))
+                             paste0(project_folder,
+                                    "_SensorData_Georeferenced_", i, ".csv")))
 }
+
+
+# Write summary file
+npdat <- fdat[fdat$Dive_Phase != 'Padded_transect',]
+sumdat <- npdat %>% group_by(dplyr::across(grp)) %>% 
+  summarise(
+    Length_hrs = as.numeric(round(tail(Datetime,1) - head(Datetime,1),2)),
+    Start_Longitude = head(ROV_Longitude_unsmoothed,1),
+    Start_Latitude =head(ROV_Latitude_unsmoothed,1),
+    End_Longitude = tail(ROV_Longitude_unsmoothed,1),
+    End_Latitude = tail(ROV_Latitude_unsmoothed,1),
+    Start_Depth =head(round(Depth_m),1),
+    End_Depth = tail(round(Depth_m),1),
+    Max_Depth = max(round(Depth_m))
+)
+write.csv(sumdat, quote = F, row.names = F,
+          file = file.path(final_dir, paste0(project_folder,"_DiveSummaries.csv")))
 
 
 

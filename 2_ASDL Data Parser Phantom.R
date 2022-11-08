@@ -22,47 +22,7 @@
 #
 # Script Author: Ben Snow, adapted by Jessica Nephin
 # Script Date: Sep 4, 2019, adapted in Jan 2022
-# R Version: 3.5.1, version 4.0.2
-
-
-################################################################################
-#                                   CHANGE LOG                                 #
-################################################################################
-#
-# June 6, 2020: Converted out of range values of -99.999 or 0 in the DVL Bottom 
-#               velocity values to -9999, to match out of range values used for
-#               Altitude and Slant Range.
-# June 6, 2020: Set out of range values of for Altitude and Slant Range to -9999.
-# Apr 21, 2021: Removed ASDL data processing for Cyclops camera pitch and roll. 
-#               Added in processing of pitch/roll from MiniZeus and MuxCan IMUs
-# Apr 23, 2021: Set options(digits = 12), to make sure that Lat/Long with many 
-#               sig figures are displayed as expected. Added in explicit number 
-#               of columns to read for Hemisphere_position, ROWETech DVL and RBR 
-#               log files. read_delim scans the first rows to determine the 
-#               appropriate number of columns for the parsed data, these devices
-#               can have variable numbers of columns when parsed from comma 
-#               delimited format. Setting number of columns explicitly via 
-#               col_names = paste0("X", seq_len(...)), where ... is the 
-#               explicitly stated number of columns, will control for this.
-# Jan 2021: - Created a function to load and process the datetime
-#           - Function catches errors and keeps going
-#           - Removed the need to convert from datetime to numeric back to dt
-#           - Applies that function to each file type
-#           - Use NA as nodata instead of -999
-#           - Removed need for measurements package, added future.apply
-#           - Fixed if exists statements
-#           - Saves data processing log with warnings, errors and data summaries
-#           - Added manual calc of rov lat/lon from trackman
-#           - Fixed error in '2b_Manual Beacon Position Calculator.R' code that 
-#             used ship position instead of calculated position
-#           - Calculates speed in knots from DVL velocities
-#           - Switched order of heading and depth in "ROV" files, possible error
-#           - Manual tracking lat/lon do not match beacon lat/lon from hypack,
-#             changed the bearing from the ships heading and matches better, the
-#             trackman manual says it can be referenced to NORTH or BOW.
-#           - Added more error code filters from TrackMan
-#           - removed 'Vector_12' sounder processing, wasn't used
-################################################################################
+# R Version: 4.0.2
 
 
 #===============================================================================
@@ -308,7 +268,7 @@ RBR_files <- list.files(pattern = "^RBR", path = ASDL_dir, full.names = T)
 # Run if files exist
 if( length(RBR_files) > 0 ){
   # Message
-  message("\nCreating 'RBR_CTD_MasterLog.csv'", "\n")
+  message("\nCreating 'CTD_MasterLog.csv'", "\n")
   # Apply function in parallel
   rbrlist <- future_lapply(RBR_files, FUN=readASDL, type="rbr")
   # Bind into data frame
@@ -323,7 +283,7 @@ if( length(RBR_files) > 0 ){
   # Check
   plot(RBR_all$Depth_m, RBR_all$Pressure_dbar)
   # Write
-  write.csv(RBR_all, file.path(save_dir,"RBR_CTD_MasterLog.csv"),
+  write.csv(RBR_all, file.path(save_dir,"CTD_MasterLog.csv"),
             quote = F, row.names = F)
 } else {
   stop("\nNo RBR files were found!\n")

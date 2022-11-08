@@ -14,62 +14,13 @@
 # the working directory into one 'master file', and to then use transect start/
 # end time to 'trim' the master file time series to the periods of interest. 
 # Specifically, data is trimmed to transect start/end times based on divelog. 
-#
-# The script will search for the preferred data source first (i.e. CTD depth, 
-# rather than onboard depth sensor) and will fall back to extracting the 
-# secondary source as required, while also writing a data flag.
 # 
 # Note: All datetimes in dive log must be in yyyy-mm-dd hh:mm:ss format
 #
 # Script Author: Ben Snow, adapted by Jessica Nephin
 # Script Date: Aug 27, 2019, adapted in Jan 2022
-# R Version: 3.5.1, version 4.0.2
+# R Version: version 4.0.2
 
-
-################################################################################
-#                                           CHANGE LOG
-################################################################################
-#
-# May 12, 2020: Padded transect start and end times by 5 minutes on either side, 
-#               as per request from J.Nephin and S. Jeffery
-# May 24, 2020: Changed out of range values for Tritech PA500 altimeter 
-#               (MiniZeus Slant Range) and ROWETech DVL (Altitude) to -9999, 
-#               instead of N/A. Note that Phantom ROV speed (from the DVL) be 
-#               default reads -9999 when out of range.
-# June 2, 2020: Both Phantom heading and ship heading are now exported by this 
-#               script; previously it was only the phantom's heading. Also, 
-#               changed out-of range data values for speed from -99.9999 to 
-#               -9999, to maintain consistency with Altitude and Slant Range 
-#               Calculations.
-# Apr 21, 2021: Updated device read in values, Cyclops HPR records removed, 
-#               switched to RogueCam. Updated the initial read in loop to read 
-#               an extra column now reads up to column X6 (previously was only 
-#               to X5). This allows for appropriate parsing of the HPR devices, 
-#               which includes data up to column X6.
-# Apr 27, 2021: Added new section to create non-clipped data records, this is to 
-#               allow plotting of certain variables during the descent/ascent 
-#               phase of each dive.
-# Nov 18, 2021: Tested GitHub functionality with RStudio
-# Jan 2022: Started develop branch, made a number of changes:
-#          - raw files read once with readLines then parsed
-#          - uses function for reading raw files (faster than loop)
-#          - processes sensor data prior to expanding to a 1Hz freq dataset
-#          - added feet to meters conversion of secondary depth source
-#          - fills in rov position gaps with ship gps, added source field 
-#          - negative no data values classed as NA instead of -999
-#          - gives option for transect padding, default to 2 min
-#          - removes any time overlap between transects caused by padding
-#          - merges padded start/end times with processed sensor data
-#          - option to save off transect data too
-#          - attempted to make code more explicit, removed use of column order
-#          - also removed all get() functions
-#          - exports all data together instead of by transect
-#          - Saves data processing log with warnings, errors and data summaries
-#          - Using terra instead of rgdal, accepts NA values
-#          - Added before or after dive phase field, used before and after 
-#            of descent or ascent in case there are multiple transects in a dive
-#          - Removed filling beacon position gaps with ship position
-################################################################################
 
 
 #===============================================================================
@@ -105,7 +56,7 @@ onlyTransects <- TRUE
 
 # Should the secondary depth source be converted to meters?
 # Multiply by 3.28084
-convert_depth <- TRUE
+convert_depth <- FALSE
 
 
 #===============================================================================
@@ -118,13 +69,13 @@ convert_depth <- TRUE
 wdir <- getwd()
 
 # Enter Project folder
-project_folder <- "PAC2022-036_phantom"
+project_folder <- "PAC2021-036_boots"
 
 # Directory where Hypack .RAW files are stored
 hypack_path <- file.path(wdir, project_folder, "Raw")
 
 # Directory where dive log csv file is stored
-divelog_path <- file.path(wdir, project_folder, "Dive_Logs/PAC2022-036_dive_log.csv")
+divelog_path <- file.path(wdir, project_folder, "Dive_Log/PAC2021-036_dive_log.csv")
 
 # Create directory for saving .CSV files
 save_dir <- file.path(wdir, project_folder, "1.Hypack_Processed_Data")
@@ -141,20 +92,21 @@ device_types <- c("POS","EC1","HCP","GYR","DFT")
 # Set column names for position, depth, heading, draft and heave data sources. 
 # Must match the names as listed in hardware devices. If a device is not present, 
 # write NULL. MAKE SURE DEVICE NAMES MATCH .RAW FILES 
-ship_heading_pref <- "Hemisphere_GPS"
-GPS_pref <- "Hemisphere_GPS"
-depth_pref <- "RBR_CTD_Depth" 
-pos_pref <- "USBL_300-506_ROV" 
-phantom_heading_pref <- "ROV_Heading_Depth_UTurns" 
-speed_pref <- "Disabled" 
-altitude_pref <- "Tritech_Slant_Range" 
-slant_pref <- "Disabled"
-rogue_cam_pref <- "Disabled"
+ship_heading_pref <- "Ship_Heading"
+GPS_pref <- "Ship_GPS"
+depth_pref <- "SBE25_Depth_in" 
+rov_heading_pref <- "BOOTS_string" 
+pos_pref <- "AAE_1000_Responder" # rov position
+altitude_pref <- "BOOTS_Altitude_Imagenex" 
+slant_pref <- "Tritech_slant_range"
+pitch_roll_pref <- "MiniZeus_Pitch_Roll"
+speed_pref <- NULL 
 
 # Set names for secondary hardware devices, for cases were primary device may 
 # be malfunctioning, NULL if there is no secondary
 pos_secondary <- NULL
-depth_secondary <- "ROV_Heading_Depth_UTurns" 
+depth_secondary <- "BOOTS_string" 
+
 
 
 
@@ -184,11 +136,11 @@ cat("ship_heading_pref = '", ship_heading_pref, "'\n", sep="")
 cat("GPS_pref = '", GPS_pref, "'\n", sep="")
 cat("depth_pref = '", depth_pref, "'\n", sep="")
 cat("pos_pref = '", pos_pref, "'\n", sep="")
-cat("phantom_heading_pref = '", phantom_heading_pref, "'\n", sep="")
+cat("rov_heading_pref = '", rov_heading_pref, "'\n", sep="")
 cat("speed_pref = '", speed_pref, "'\n", sep="")
 cat("altitude_pref = '", altitude_pref, "'\n", sep="")
 cat("slant_pref = '", slant_pref, "'\n", sep="")
-cat("rogue_cam_pref = '", rogue_cam_pref, "'\n", sep="")
+cat("pitch_roll_pref = '", pitch_roll_pref, "'\n", sep="")
 cat("pos_secondary = '", pos_secondary, "'\n", sep="")
 cat("depth_secondary = '", depth_secondary, "'\n\n", sep="")
 
@@ -312,8 +264,8 @@ names(depth_data2)[1] <- "Depth2"
 # Merge depths together with datetime
 depths <- merge(depth_data, depth_data2, by="Datetime", all=T)
 # Assign NA to all negative values
-depths$Depth_m[ depths$Depth_m < 0 ] <- NA
-depths$Depth2[ depths$Depth2 < 0 ] <- NA
+depths$Depth_m[ depths$Depth_m <= 0 ] <- NA
+depths$Depth2[ depths$Depth2 <= 0 ] <- NA
 # Convert Depth to meters
 # Question: What units should depth_secondary be in?  
 if( convert_depth ) depths$Depth2 <- depths$Depth2 * 3.28084
@@ -479,7 +431,7 @@ message("\nExtracting the ROV and ship heading")
 # device type == 'GYR' device type
 # primary device == phantom_heading_pref
 # secondary device == ship_heading_pref
-rov_heading_data <- dat[dat$Device_type == "GYR" & dat$Device == phantom_heading_pref, 
+rov_heading_data <- dat[dat$Device_type == "GYR" & dat$Device == rov_heading_pref, 
                         c("X4", "Datetime")]
 names(rov_heading_data)[1] <- "ROV_heading"
 ship_heading_data <- dat[dat$Device_type == "GYR" & dat$Device == ship_heading_pref, 
@@ -505,12 +457,12 @@ print(summary(headings))
 message("\nExtracting altitude")
 # device type == 'DFT' device type
 # primary device == altitude_pref
-if(altitude_pref == "Disabled"){
+if( is.null(altitude_pref) ){
   altitude_data <- data.frame(Altitude_m = numeric(0), Datetime = numeric(0))
-}else{
-altitude_data <- dat[dat$Device_type == "EC1" & dat$Device == altitude_pref, 
-                     c("X4", "Datetime")]
-names(altitude_data)[1] <- "Altitude_m"
+} else {
+  altitude_data <- dat[dat$Device_type == "EC1" & dat$Device == altitude_pref, 
+                       c("X4", "Datetime")]
+  names(altitude_data)[1] <- "Altitude_m"
 }
 # Assign NA to all negative values
 altitude_data$Altitude_m[ altitude_data$Altitude_m < 0 ] <- NA
@@ -528,12 +480,12 @@ print(summary(altitude))
 message("\nExtracting slant range")
 # device type == 'EC1' device type
 # primary device == slant_pref
-if(slant_pref == "Disabled"){
+if( is.null(slant_pref) ){
   slant_data <- data.frame(Slant_range_m = numeric(0), Datetime = numeric(0))
 }else{
-slant_data <- dat[dat$Device_type == "EC1" & dat$Device == slant_pref, 
-                  c("X4", "Datetime")]
-names(slant_data)[1] <- "Slant_range_m"
+  slant_data <- dat[dat$Device_type == "EC1" & dat$Device == slant_pref, 
+                    c("X4", "Datetime")]
+  names(slant_data)[1] <- "Slant_range_m"
 }
 # Assign NA to all negative values
 slant_data$Slant_range_m[ altitude_data$Slant_range_m <= 0 ] <- NA
@@ -551,11 +503,11 @@ print(summary(slant))
 message("\nExtracting ROV speed")
 # device type == 'HCP' device type
 # primary device == speed_pref
-if(speed_pref == "Disabled"){
+if( is.null(speed_pref) ){
   speed_data <- data.frame(Speed_kts=numeric(0), Datetime=numeric(0))
 }else{
-speed_data <- dat[dat$Device_type == "DFT" & dat$Device == speed_pref, 
-                  c("X4", "Datetime")]
+  speed_data <- dat[dat$Device_type == "DFT" & dat$Device == speed_pref, 
+                    c("X4", "Datetime")]
 }
 names(speed_data)[1] <- "Speed_kts"
 # Assign NA to all negative values
@@ -565,7 +517,7 @@ speed_data$Speed_kts[ speed_data$Speed_kts < 0 ] <- NA
 # Remove duplicated
 speed <- speed_data[!duplicated(speed_data$Datetime),]
 # Check for high speeds (> 30 knots), reject these, as they are obviously false.
-hist(speed$Speed_kts, breaks=30)
+if( !is.null(speed_pref)) hist(speed$Speed_kts, breaks=30)
 # Summary
 print(summary(speed))
 
@@ -574,18 +526,17 @@ print(summary(speed))
 #   Pitch/roll  #
 #===============#
 # Message
-message("\nExtracting Rogue pitch and roll")
+message("\nExtracting Camera pitch and roll")
 # device type == 'HCP' device type
-# primary device == rogue_cam_pref
-if(rogue_cam_pref == "Disabled"){
+# primary device == pitch_roll_pref
+if( is.null(pitch_roll_pref) ){
   cam_data = data.frame(Rogue_roll=numeric(0), Rogue_pitch=numeric(0), Datetime=numeric(0))
 }else{
-cam_data <- dat[dat$Device_type == "HCP" & dat$Device == rogue_cam_pref, 
-                c("X5", "X6", "Datetime")] # X4 was all zeros
+  cam_data <- dat[dat$Device_type == "HCP" & dat$Device == rogue_cam_pref, 
+                  c("X5", "X6", "Datetime")] # X4 was all zeros
 }
-# Question: Confirm which is pitch and roll?
-# Followed order in code but doesn't match up with 2019-015 processed data
-names(cam_data)[1:3] <- c("Rogue_roll","Rogue_pitch","Datetime")
+# Double check order of pitch and roll
+names(cam_data)[1:3] <- c("Camera_roll","Camera_pitch","Datetime")
 # Remove duplicated
 pitchroll <- cam_data[!duplicated(cam_data$Datetime),]
 # Summary
