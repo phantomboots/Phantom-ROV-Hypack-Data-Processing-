@@ -419,67 +419,6 @@ if( length(Imagenex_files) > 0 ){
 
 
 #===============================================================================
-# STEP 4 - CALCULATE ROV POSITION FROM TRACKMAN 
-
-# Computes the coordinates of each beacon using the X, Y distance and bearing 
-# from the hydrophone specified in the TrackMan master file and converts these 
-# to new Lat/Long positions for the vehicle. This doesn't take into account any
-# GPS offsets (the distance between the hydrophone pole and the GPS antenna).
-
-# Message
-message("\nCreating 'Manual_Beacon_Tracking_MasterLog.csv'", "\n")
-
-# Read in data if not already loaded in workspace
-if( !exists("Track_all") ){
-  Track_all <- read.csv(file.path(save_dir,"TrackMan_Beacons_MasterLog.csv"))
-  Track_all$Datetime <- ymd_hms(Track_all$Datetime)
-}
-if( !exists("GPS_all") ){
-  GPS_all <- read.csv(file.path(save_dir,"Hemisphere_GPS_MasterLog.csv"))
-  GPS_all$Datetime <- ymd_hms(GPS_all$Datetime)
-}
-
-# Select only ROV beacon
-table(Track_all$Beacon_ID)
-Track_all <- filter(Track_all, Beacon_ID == ROV_beacon)
-
-# Filter out TrackMan readings where no Distance or bad error codes
-TrackMan <- filter(Track_all, DistanceX_m != 0 &  DistanceY_m != 0 &
-                     Error_Code == 0 | 
-                     (Error_Code > 20 & Error_Code != 23 & Error_Code != 73))
-# Join the Lat/Long positions to the TrackMan DF
-New_Tracking <- left_join(TrackMan, GPS_all, by = "Datetime")
-# Calculate distance to ship from DistanceX and DistanceY variables
-New_Tracking$Distance <- sqrt(New_Tracking$DistanceX_m^2 + 
-                                New_Tracking$DistanceY_m^2)
-# Remove records with NA coordinates 
-New_Tracking <- New_Tracking[!is.na(New_Tracking$Latitude),]
-# Check
-hist(New_Tracking$Distance, breaks = 30)
-
-# Generate new points with X,Y distance and bearing from existing Lat/Longs
-Beacon_Coords <- destPoint(p=New_Tracking[c("Longitude","Latitude")], 
-                           b=New_Tracking$Target_Bearing, 
-                           d=New_Tracking$Distance)
-
-# Slot the new Beacon tracking points back into New_Tracking DF
-New_Tracking$Beacon_Longitude <- Beacon_Coords[,1]
-New_Tracking$Beacon_Latitude <- Beacon_Coords[,2]
-# Check
-plot(New_Tracking$Beacon_Longitude, New_Tracking$Beacon_Latitude, asp=1)
-# Drop unnecessary columns
-New_Tracking <- New_Tracking[c("Datetime","Beacon_Longitude",
-                               "Beacon_Latitude")]
-# Summary
-print(summary(New_Tracking))
-# Write
-write.csv(New_Tracking, quote = F, row.names = F,
-          file.path(save_dir,"Manual_Beacon_Tracking_MasterLog.csv"))
-
-
-
-
-#===============================================================================
 # Print end of file message and elapsed time
 cat( "\nFinished: ", sep="" )
 print( Sys.time( ) - sTime )
