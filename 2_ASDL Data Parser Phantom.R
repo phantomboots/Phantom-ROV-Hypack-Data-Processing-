@@ -15,6 +15,7 @@
 #   - MiniZeus zoom, aperture and focus
 #   - MiniZeus pitch and roll
 #   - TrackMan data 
+#   - Cyclops cam
 #
 # NOTE: In 2021, the RogueCam pitch and roll was only read into Hypack, due 
 #   to a device hardware limitation. For this reason, there is no RogueCam 
@@ -53,11 +54,11 @@ plan(multisession)
 wdir <- getwd() 
 
 # Enter Project folder name
-project_folder <- "Pac2022-036_phantom"
+project_folder <- "Pac2019-015_phantom"
 
 # Directory where the ASDL files are stored
 # Path must start from your working directory, check with getwd(), or full paths
-ASDL_dir <- file.path(wdir, project_folder, "ASDL_Backup")
+ASDL_dir <- file.path(wdir, project_folder, "ASDL")
 
 # Set the directory for saving of the master files.
 # Path must start from your working directory, check with getwd(), or full paths
@@ -74,11 +75,11 @@ rov_roll_offset <- -1
 
 # Check order of ROV heading and depth fields in ASDL log files 'heading_depth'
 # Assign order and names and depth and heading columns
-rov_order <- c("ROV_heading","Depth_m")
+rov_order <- c("Depth_m", "ROV_heading")
 
 # Should the ROV depth source be converted to meters?
 # Multiply by 3.28084
-convert_depth <- TRUE
+convert_depth <- FALSE
 
 #===============================================================================
 # STEP 2 - START LOG FILE
@@ -110,6 +111,12 @@ readASDL <- function( afile, type ){
     lapply(packages, require, character.only = TRUE)
     # Read in lines from ASDL files
     alines <- readLines(afile, skipNul=FALSE)
+    # If <> messages exist add <> to the start of all lines
+    if (any(grep("^<", alines))){
+      ind <- 1:length(alines)
+      ind <- ind[!ind %in% grep("^<", alines)]
+      alines[ind] <- paste0("<>",alines[ind])
+    } 
     # If 'pos' crop to first GPZDA row, first row with datetime and 
     # subset GPZDA and GPGGA rows only
     if ( type == "pos" ){
@@ -138,6 +145,7 @@ readASDL <- function( afile, type ){
     if( type == "dvl" ) ds <- ds[,paste0("X", c(1,5:9))]
     if( type == "sound" ) ds <- ds[,c("X1","X4")]
     if( type == "imu" ) ds <- ds[,paste0("X", 1:5)]
+    if( type == "cyclops" ) ds <- data.frame(X1=ds$X1,X2=gsub(".*=","", ds$X1),X3=ds$X2,X4=ds$X3)
     # Extract datetime in X1
     if( type == "rbr" ){
       ds$X1 <- sub(".*[>]","", ds$X1)
@@ -148,7 +156,7 @@ readASDL <- function( afile, type ){
       date_str[dtype == "$GPGGA"] <- "19990909" # place holder to be removed
       time_str <- sub("[.].*","",ds$X2)
       ds$X1 <- suppressWarnings(ymd_hms(paste(date_str, time_str, sep = " ")))
-      ds$X1[dtype == "$GPGGA"] <- NA # remove place holder datetimes
+      ds$X1[grep("GPGGA", dtype)] <- NA # remove place holder datetimes
     } else {
       date_str <- str_extract(ds$X1, "\\d{8}")
       time_str <- str_extract(ds$X1, "\\d{2}\\:\\d{2}\\.\\d{2}")
@@ -160,7 +168,7 @@ readASDL <- function( afile, type ){
     # For position, reformat lat/lon
     if( type == "pos" ){
       # Subset rows and columns GPS position
-      ds <- ds[dtype == "$GPGGA", c("X1","X3","X5")]
+      ds <- ds[grep("GPGGA", dtype), c("X1","X3","X5")]
       # Reformat to decimal degrees with 7 decimal points
       ds$X3 <- round(as.numeric(substring(ds$X3, 1, 2)) + 
                        (as.numeric(substring(ds$X3, 3, nchar(ds$X3)))/60), 7)
@@ -191,6 +199,7 @@ readASDL <- function( afile, type ){
   })    
 }
 
+
 #======================#
 #    Depth & Heading   #
 #======================#
@@ -216,7 +225,7 @@ if( length(dh_files) > 0 ){
   if( convert_depth ) ROV_all$Depth_m <- ROV_all$Depth_m * 3.28084
   # Set depths below zero to zero
   ROV_all$Depth_m[ROV_all$Depth_m < 0] <- 0
-  ROV_all$Depth_m[ROV_all$Depth_m > 250] <- NA
+  ROV_all$Depth_m[ROV_all$Depth_m > 300] <- NA
   # Summary
   print(summary(ROV_all))
   # Check depth
@@ -296,7 +305,7 @@ if( length(RBR_files) > 0 ){
 # from processing to simplify
 
 # List files
-GPS_files <- list.files(pattern = "Hemisphere", path = ASDL_dir, full.names = T)
+GPS_files <- list.files(pattern = "^Hemisphere", path = ASDL_dir, full.names = T)
 GPS_files <- GPS_files[grep("position", GPS_files, ignore.case = T)]
 
 # Run if files exist
@@ -401,7 +410,8 @@ if( length(DVL_files) > 0 ){
   DVL_all$Speed_kts <- sqrt((DVL_all$Bottom_X_Velocity_ms)^2 + 
                               (DVL_all$Bottom_Y_Velocity_ms)^2)
   DVL_all$Speed_kts <- DVL_all$Speed_kts * 1.94384 # m/s to knots
-  # todo maybe filter out large values of speed, over 5 knots?
+  # Filter too fast speeds
+  DVL_all$Speed_kts[ DVL_all$Speed_kts >= 3 ] <- NA
   # Summary
   print(summary(DVL_all))
   # Check for high speeds
@@ -471,6 +481,33 @@ if( length(IMU_files) > 0 ){
             quote = F, row.names = F)
 } else {
   stop("\nNo Zeus_Cans files were found!\n")
+}
+
+
+#==================#
+#      Cyclops     #
+#==================#
+
+# List files
+Cyclops_files <- list.files(pattern = "^Cyclops", 
+                        path = ASDL_dir, full.names = T)
+# Run if files exist
+if( length(Cyclops_files) > 0 ){
+  # Message
+  message("\nCreating 'Cyclops_MasterLog.csv'", "\n")
+  # Apply function in parallel
+  cyclist <- future_lapply(Cyclops_files, FUN=readASDL, type="cyclops")
+  # Bind into data frame
+  CYC_all <- do.call("rbind", cyclist)
+  # Rename
+  names(CYC_all) <- c("Datetime","Cyclops_yaw","Cyclops_pitch","Cyclops_roll")
+  # Summary
+  print(summary(CYC_all))
+  # Write
+  write.csv(CYC_all, file.path(save_dir,"Cyclops_MasterLog.csv"),
+            quote = F, row.names = F)
+} else {
+  stop("\nNo Cyclops files were found!\n")
 }
 
 

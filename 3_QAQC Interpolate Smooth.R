@@ -40,21 +40,21 @@ options(digits = 12)
 wdir <- getwd() 
 
 # Project folder
-project_folder <- "Pac2021-036_boots"
+project_folder <- "Pac2019-015_phantom"
 
 # ROV type
 # phantom or boots or heavy
-rov <- "boots"
+rov <- "phantom"
 
 # CTD type
 # RBR or SBE, or NULL if no CTD
-ctd <- "SBE"
+ctd <- "RBR"
 
 # Directory where Hypack processed data are stored
 hypack_path <- file.path(wdir, project_folder, "1.Hypack_Processed_Data")
 
 # Directory where CTD files are stored
-CTD_path <- file.path(wdir, project_folder, "SBE25")
+CTD_path <- file.path(wdir, project_folder, "RBR_CTD")
 
 # Directory with ASDL master files
 ASDL_path <- file.path(wdir, project_folder, "2.ASDL_Processed_Data")
@@ -82,7 +82,7 @@ ROV_beacon <- 1
 
 # Set the value to use for the 'window' size (in seconds) of the running median 
 # smoothing of the beacon position. Must be odd number! Typically from 31 to 301
-smooth_window <- 301
+smooth_window <- 31
 
 # Set the LOESS span values. This is a parameter that described the proportion 
 # of the total data set to use when weighting (e.g. span = 0.05 would use 5% 
@@ -92,12 +92,12 @@ loess_span = 0.05
 # Set the maximum distance (in meters) that can occur between the ROV and ship
 # Will differ depending on the ROV
 # Question - what is this distance for phantom (200m) and boots (500m)?
-max_dist <- 500
+max_dist <- 200
 
 # Slant range and altimeter cut-offs. 
 # What is are the maximum possible values in meters?
-slant_max <- 50
-alititude_max <- 20
+slant_max <- 10
+alititude_max <- 10
 
 
 #===============================================================================
@@ -130,7 +130,7 @@ message( "ROV beacon clump ID (for manual trackman calculations) = ", ROV_beacon
 # List of all potentially existing ASDL files to load
 asdl_files <- c('Hemisphere_GPS','Hemisphere_Heading','Tritech_SlantRange',
                 'BOOTS_string','Imagenex_Atlimeter','CTD','TrackMan_Beacons',
-                'DVL','MiniZeus_ZFA','ROV_Heading_Depth','Zeus_ROV_IMU')
+                'DVL','MiniZeus_ZFA','ROV_Heading_Depth','Zeus_ROV_IMU', 'Cyclops')
 
 # Load ASDL files
 for( f in asdl_files){
@@ -464,7 +464,7 @@ if(nrow(tmp) > 0) {
   # Fill gaps in ship position
   message( "Filling ship position with Hemisphere_GPS_MasterLog.csv:")
   dat <- fillgaps(tofill=dat,
-                  forfilling=Hemisphere_Master,
+                  forfilling=Hemisphere_GPS_Master,
                   type = "pos",
                   sourcefields=c("Ship_Longitude", "Ship_Latitude"),
                   fillfields=c("Longitude", "Latitude") )
@@ -647,7 +647,6 @@ if (rov == 'boots'){
 plot(dat$Altitude_m)
 
 
-
 #==============#
 #     SPEED    #
 #==============#
@@ -663,6 +662,7 @@ if(nrow(tmp) > 0) {
                   fillfields="Speed_kts" )
 }
 
+
 #===============================================================================
 # STEP 8 - ADD ASDL and RBR CTD DATA NOT IN HYPACK DATA 
 
@@ -671,6 +671,7 @@ dat <- merge(dat, MiniZeus_ZFA_Master[names(MiniZeus_ZFA_Master) != "ID"],
              by = "Datetime", all.x=T)
 dat <- merge(dat, Zeus_ROV_IMU_Master[names(Zeus_ROV_IMU_Master) != "ID"], 
              by = "Datetime", all.x=T)
+dat <- merge(dat, Cyclops_Master[names(Cyclops_Master) != "ID"], by = "Datetime", all.x=T)
 dat <- merge(dat, CTD_Data[!names(CTD_Data) %in% c("Depth_m","ID")], 
              by = "Datetime", all.x=T)
 if(rov == 'boots'){
@@ -682,7 +683,6 @@ if(rov == 'heavy'){
   dat <- merge(dat, T_Data[!names(T_Data) %in% c("Depth_m","ROV_heading","ID")], 
                by = "Datetime", all.x=T)  
 }
-
 
 # Use ASDL data to fill RBR CTD data gaps
 # Looks for gaps using the first field => Conductivity_mS_cm  
@@ -744,7 +744,6 @@ print(summary(dat))
 
 
 # Set out of bound altitude and slant range to NA
-# > 20m for altitude and > 10m for slant range
 dat$Altitude_m[dat$Altitude_m > alititude_max] <- NA
 dat$Slant_range_m[dat$Slant_range_m > slant_max] <- NA
 
@@ -971,8 +970,8 @@ fdat <- dat[,names(dat) != 'Beacon_Gaps']
 fdat <- fdat %>% relocate(Datetime)
 fdat <- fdat %>% relocate(Transect_Name, .after = Dive_Name)
 fdat <- fdat %>% relocate(ROV_Longitude_loess,
-                          ROV_Longitude_smoothed,
                           ROV_Latitude_loess,
+                          ROV_Longitude_smoothed,
                           ROV_Latitude_smoothed, .after = ROV_Latitude_unsmoothed)
 names(fdat)
 
@@ -986,7 +985,7 @@ write.csv(fdat, quote = F, row.names = F,
 
 # Export by dive or transect
 for (i in unique(fdat[[grp]]) ){
-  tmp <- fdat[fdat$Dive_Name == i,]
+  tmp <- fdat[fdat[[grp]] == i,]
   write.csv(tmp, quote = F, row.names = F,
             file = file.path(final_dir, 
                              paste0(project_folder,
@@ -996,19 +995,20 @@ for (i in unique(fdat[[grp]]) ){
 
 # Write summary file
 npdat <- fdat[fdat$Dive_Phase != 'Padded_transect',]
-sumdat <- npdat %>% group_by(dplyr::across(grp)) %>% 
+sumdat <- npdat %>% group_by(Dive_Name, Transect_Name) %>% 
   summarise(
-    Length_hrs = as.numeric(round(tail(Datetime,1) - head(Datetime,1),2)),
+    Date = date(head(Datetime,1)),
+    Length_hrs = as.numeric(round(difftime(tail(Datetime,1), head(Datetime,1), units="hours"),2)),
     Start_Longitude = head(ROV_Longitude_unsmoothed,1),
     Start_Latitude =head(ROV_Latitude_unsmoothed,1),
     End_Longitude = tail(ROV_Longitude_unsmoothed,1),
     End_Latitude = tail(ROV_Latitude_unsmoothed,1),
     Start_Depth =head(round(Depth_m),1),
     End_Depth = tail(round(Depth_m),1),
-    Max_Depth = max(round(Depth_m))
-  )
+    Max_Depth = max(round(Depth_m))) %>% 
+  arrange(Date)
 write.csv(sumdat, quote = F, row.names = F,
-          file = file.path(final_dir, paste0(project_folder,"_DiveSummaries.csv")))
+          file = file.path(wdir, project_folder, paste0(project_folder,"_DiveSummaries.csv")))
 
 
 

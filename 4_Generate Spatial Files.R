@@ -39,10 +39,10 @@ lapply(packages, require, character.only = TRUE)
 wdir <- getwd() 
 
 # Project folder
-project_folder <- "Pac2021-036_boots"
+project_folder <- "Pac2019-015_phantom"
 
 # Name of Ship used in the survey
-ship_name <- "Tully"
+ship_name <- "Vector"
 
 # Directories where final processed data are stored
 imports_dir <- file.path(wdir, project_folder, "3.Final_Processed_Data")

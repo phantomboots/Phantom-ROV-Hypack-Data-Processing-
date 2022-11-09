@@ -46,7 +46,7 @@ plan(multisession)
 
 # Choose the number of minutes for padding start and end transect times
 # If onlyTransects is FALSE, padded time can be set to 0
-padtime <- 2
+padtime <- 5
 
 # Clip to transect or dive?
 # TRUE for on-transect data only
@@ -69,13 +69,13 @@ convert_depth <- FALSE
 wdir <- getwd()
 
 # Enter Project folder
-project_folder <- "PAC2021-036_boots"
+project_folder <- "Pac2019-015_phantom"
 
 # Directory where Hypack .RAW files are stored
 hypack_path <- file.path(wdir, project_folder, "Raw")
 
 # Directory where dive log csv file is stored
-divelog_path <- file.path(wdir, project_folder, "Dive_Log/PAC2021-036_dive_log.csv")
+divelog_path <- file.path(wdir, project_folder, "Dive_Log/Pac2019-015_Legs1to3_DiveLog.csv")
 
 # Create directory for saving .CSV files
 save_dir <- file.path(wdir, project_folder, "1.Hypack_Processed_Data")
@@ -92,20 +92,19 @@ device_types <- c("POS","EC1","HCP","GYR","DFT")
 # Set column names for position, depth, heading, draft and heave data sources. 
 # Must match the names as listed in hardware devices. If a device is not present, 
 # write NULL. MAKE SURE DEVICE NAMES MATCH .RAW FILES 
-ship_heading_pref <- "Ship_Heading"
-GPS_pref <- "Ship_GPS"
-depth_pref <- "SBE25_Depth_in" 
-rov_heading_pref <- "BOOTS_string" 
-pos_pref <- "AAE_1000_Responder" # rov position
-altitude_pref <- "BOOTS_Altitude_Imagenex" 
-slant_pref <- "Tritech_slant_range"
-pitch_roll_pref <- "MiniZeus_Pitch_Roll"
-speed_pref <- NULL 
+pos_pref <- "USBL_ROV1_300 Series" # rov position
+rov_heading_pref <- "OSD_Heading_Depth_Capture" 
+ship_heading_pref <- "Hemisphere GPS"
+GPS_pref <- "Hemisphere GPS"
+depth_pref <- "RBR CTD" 
+altitude_pref <- "ROWETech_DVL" 
+slant_pref <- "MiniZeus_Range_Tritech"
+speed_pref <- "ROWETech_DVL" 
 
 # Set names for secondary hardware devices, for cases were primary device may 
 # be malfunctioning, NULL if there is no secondary
-pos_secondary <- NULL
-depth_secondary <- "BOOTS_string" 
+pos_secondary <- "USBL_Model 4370_Wide angle"
+depth_secondary <- "OSD_Heading_Depth_Capture" 
 
 
 
@@ -140,7 +139,6 @@ cat("rov_heading_pref = '", rov_heading_pref, "'\n", sep="")
 cat("speed_pref = '", speed_pref, "'\n", sep="")
 cat("altitude_pref = '", altitude_pref, "'\n", sep="")
 cat("slant_pref = '", slant_pref, "'\n", sep="")
-cat("pitch_roll_pref = '", pitch_roll_pref, "'\n", sep="")
 cat("pos_secondary = '", pos_secondary, "'\n", sep="")
 cat("depth_secondary = '", depth_secondary, "'\n\n", sep="")
 
@@ -263,7 +261,7 @@ depth_data2 <- dat[dat$Device_type == "EC1" & dat$Device == depth_secondary,
 names(depth_data2)[1] <- "Depth2"
 # Merge depths together with datetime
 depths <- merge(depth_data, depth_data2, by="Datetime", all=T)
-# Assign NA to all negative values
+# Assign NA to all negative and huge values
 depths$Depth_m[ depths$Depth_m <= 0 ] <- NA
 depths$Depth2[ depths$Depth2 <= 0 ] <- NA
 # Convert Depth to meters
@@ -455,12 +453,12 @@ print(summary(headings))
 #=============#
 # Message
 message("\nExtracting altitude")
-# device type == 'DFT' device type
+# device type == 'DFT' device type or 'EC1'
 # primary device == altitude_pref
 if( is.null(altitude_pref) ){
   altitude_data <- data.frame(Altitude_m = numeric(0), Datetime = numeric(0))
 } else {
-  altitude_data <- dat[dat$Device_type == "EC1" & dat$Device == altitude_pref, 
+  altitude_data <- dat[dat$Device_type == "DFT" & dat$Device == altitude_pref, 
                        c("X4", "Datetime")]
   names(altitude_data)[1] <- "Altitude_m"
 }
@@ -488,8 +486,8 @@ if( is.null(slant_pref) ){
   names(slant_data)[1] <- "Slant_range_m"
 }
 # Assign NA to all negative values
-slant_data$Slant_range_m[ altitude_data$Slant_range_m <= 0 ] <- NA
-slant_data$Slant_range_m[ altitude_data$Slant_range_m == 9.99 ] <- NA
+slant_data$Slant_range_m[ slant_data$Slant_range_m <= 0 ] <- NA
+slant_data$Slant_range_m[ slant_data$Slant_range_m >= 9.99 ] <- NA
 # Remove duplicated
 slant <- slant_data[!duplicated(slant_data$Datetime),]
 # Summary
@@ -501,19 +499,18 @@ print(summary(slant))
 #=============#
 # Message
 message("\nExtracting ROV speed")
-# device type == 'HCP' device type
+# device type == 'HCP' device type or "DFT"
 # primary device == speed_pref
 if( is.null(speed_pref) ){
   speed_data <- data.frame(Speed_kts=numeric(0), Datetime=numeric(0))
 }else{
-  speed_data <- dat[dat$Device_type == "DFT" & dat$Device == speed_pref, 
+  speed_data <- dat[dat$Device_type == "HCP" & dat$Device == speed_pref, 
                     c("X4", "Datetime")]
 }
 names(speed_data)[1] <- "Speed_kts"
-# Assign NA to all negative values
-# todo maybe filter out large values of speed, over 5 knots?
+# Assign NA to all negative values and too fast values (> 3 knots)
 speed_data$Speed_kts[ speed_data$Speed_kts < 0 ] <- NA
-#speed_data$Speed_kts[ speed_data$Speed_kts > 5 ] <- NA
+speed_data$Speed_kts[ speed_data$Speed_kts >= 3 ] <- NA
 # Remove duplicated
 speed <- speed_data[!duplicated(speed_data$Datetime),]
 # Check for high speeds (> 30 knots), reject these, as they are obviously false.
@@ -522,25 +519,28 @@ if( !is.null(speed_pref)) hist(speed$Speed_kts, breaks=30)
 print(summary(speed))
 
 
-#===============#
-#   Pitch/roll  #
-#===============#
-# Message
-message("\nExtracting Camera pitch and roll")
-# device type == 'HCP' device type
-# primary device == pitch_roll_pref
-if( is.null(pitch_roll_pref) ){
-  cam_data = data.frame(Rogue_roll=numeric(0), Rogue_pitch=numeric(0), Datetime=numeric(0))
-}else{
-  cam_data <- dat[dat$Device_type == "HCP" & dat$Device == rogue_cam_pref, 
-                  c("X5", "X6", "Datetime")] # X4 was all zeros
-}
-# Double check order of pitch and roll
-names(cam_data)[1:3] <- c("Camera_roll","Camera_pitch","Datetime")
-# Remove duplicated
-pitchroll <- cam_data[!duplicated(cam_data$Datetime),]
-# Summary
-print(summary(pitchroll))
+# Pitch roll of camera's (rogue and cyclops) were often problematic,
+# device configurations vary widely between/within surveys and cameras. Seems 
+# like the best approach is to add this data in script #3 from the ASDL backups.
+# #===============#
+# #   Pitch/roll  #
+# #===============#
+# # Message
+# message("\nExtracting Camera pitch and roll")
+# # device type == 'HCP' device type
+# # primary device == pitchroll_pref
+# if( is.null(pitchroll_pref) ){
+#   cam_data = data.frame(Camera_roll=numeric(0), Camera_pitch=numeric(0), Datetime=numeric(0))
+# }else{
+#   cam_data <- dat[dat$Device_type == "HCP" & dat$Device == pitchroll_pref, 
+#                   c("X5", "X6", "Datetime")] # X4 was all zeros
+# }
+# # Double check order of pitch and roll
+# names(cam_data)[1:3] <- c("Camera_roll","Camera_pitch","Datetime")
+# # Remove duplicated
+# pitchroll <- cam_data[!duplicated(cam_data$Datetime),]
+# # Summary
+# print(summary(pitchroll))
 
 
 #=============#
@@ -549,7 +549,7 @@ print(summary(pitchroll))
 # Message
 message("\nCombining all sensor data")
 # Merge all together based on datetime
-df_list <- list(pos, depths, headings, altitude, slant, speed, pitchroll)
+df_list <- list(pos, depths, headings, altitude, slant, speed)
 sdat <- Reduce(function(x, y) merge(x, y, by="Datetime", all=TRUE), 
                df_list, accumulate=FALSE)
 
