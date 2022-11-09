@@ -59,8 +59,6 @@ ASDL_dir <- file.path(wdir, project_folder, "ASDL")
 save_dir <- file.path(wdir, project_folder, "2.ASDL_Processed_Data")
 dir.create(save_dir, recursive = TRUE) # Will warn if already exists
 
-# Beacon ID number for ROV beacon? (not clump beacon)
-ROV_beacon <- 4
 
 # Should the ROV depth source be converted to meters?
 # Multiply by 3.28084

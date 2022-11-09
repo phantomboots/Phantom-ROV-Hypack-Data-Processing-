@@ -75,7 +75,10 @@ offsets <- FALSE # FALSE is no offsets need to be applied, default
 # Do you want to calculate and use manual trackman ROV position as a backup for 
 # hypack ROV position?
 # TRUE for yes, FALSE for no
-trackman <- TRUE
+trackman <- FALSE
+
+# Beacon ID number for ROV beacon? (not clump beacon)
+ROV_beacon <- 1
 
 # Set the value to use for the 'window' size (in seconds) of the running median 
 # smoothing of the beacon position. Must be odd number! Typically from 31 to 301
@@ -117,6 +120,7 @@ if ( offsets ) message( "GPS along distance = ", GPS_along)
 message( "Smoothing window = ", smooth_window)
 message( "loess span = ", loess_span)
 message( "Maximum allowable distance between ship and ROV = ", max_dist, "\n")
+message( "ROV beacon clump ID (for manual trackman calculations) = ", ROV_beacon, "\n")
 
 
 #===============================================================================
@@ -327,50 +331,49 @@ if (offsets){
 # to new Lat/Long positions for the vehicle. This doesn't take into account any
 # GPS offsets (the distance between the hydrophone pole and the GPS antenna).
 
-if (trackman){
-  # Message
-  message("\nCreating 'Manual_Beacon_Tracking_MasterLog.csv'", "\n")
-  
-  # Select only ROV beacon
-  table(TrackMan_Beacons_Master$Beacon_ID)
-  Track_beacon <- filter(TrackMan_Beacons_Master, Beacon_ID == ROV_beacon)
-  
-  # Filter out TrackMan readings where no Distance or bad error codes
-  TrackMan <- filter(Track_beacon, DistanceX_m != 0 &  DistanceY_m != 0 &
-                       Error_Code == 0 | 
-                       (Error_Code > 20 & Error_Code != 23 & Error_Code != 73))
-  
-  # Join the Lat/Long positions to the TrackMan DF
-  New_Tracking <- merge(TrackMan, 
-                            dat[c("Datetime", "Ship_Longitude", "Ship_Latitude")], 
-                            by = "Datetime", all.x=T)
-  # Calculate distance to ship from DistanceX and DistanceY variables
-  New_Tracking$Distance <- sqrt(New_Tracking$DistanceX_m^2 + 
-                                  New_Tracking$DistanceY_m^2)
-  # Remove records with NA coordinates 
-  New_Tracking <- New_Tracking[!is.na(New_Tracking$Ship_Latitude),]
-  # Check
-  hist(New_Tracking$Distance, breaks = 30)
-  
-  # Generate new points with X,Y distance and bearing from existing Lat/Longs
-  Beacon_Coords <- destPoint(p=New_Tracking[c("Ship_Longitude","Ship_Latitude")], 
-                             b=New_Tracking$Target_Bearing, 
-                             d=New_Tracking$Distance)
-  
-  # Slot the new Beacon tracking points back into New_Tracking DF
-  New_Tracking$Beacon_Longitude <- Beacon_Coords[,1]
-  New_Tracking$Beacon_Latitude <- Beacon_Coords[,2]
-  # Check
-  plot(New_Tracking$Beacon_Longitude, New_Tracking$Beacon_Latitude, asp=1)
-  # Drop unnecessary columns
-  New_Tracking <- New_Tracking[c("Datetime","Beacon_Longitude",
-                                 "Beacon_Latitude")]
-  # Summary
-  print(summary(New_Tracking))
-  # Write
-  write.csv(New_Tracking, quote = F, row.names = F,
-            file.path(save_dir,"Manual_Beacon_Tracking_MasterLog.csv"))
-}
+# Message
+message("\nCreating 'Manual_Beacon_Tracking_MasterLog.csv'", "\n")
+
+# Select only ROV beacon
+table(TrackMan_Beacons_Master$Beacon_ID)
+Track_beacon <- filter(TrackMan_Beacons_Master, Beacon_ID == ROV_beacon)
+
+# Filter out TrackMan readings where no Distance or bad error codes
+TrackMan <- filter(Track_beacon, DistanceX_m != 0 &  DistanceY_m != 0 &
+                     Error_Code == 0 | 
+                     (Error_Code > 20 & Error_Code != 23 & Error_Code != 73))
+
+# Join the Lat/Long positions to the TrackMan DF
+New_Tracking <- merge(TrackMan, 
+                      dat[c("Datetime", "Ship_Longitude", "Ship_Latitude")], 
+                      by = "Datetime", all.x=T)
+# Calculate distance to ship from DistanceX and DistanceY variables
+New_Tracking$Distance <- sqrt(New_Tracking$DistanceX_m^2 + 
+                                New_Tracking$DistanceY_m^2)
+# Remove records with NA coordinates 
+New_Tracking <- New_Tracking[!is.na(New_Tracking$Ship_Latitude),]
+# Check
+hist(New_Tracking$Distance, breaks = 30)
+
+# Generate new points with X,Y distance and bearing from existing Lat/Longs
+Beacon_Coords <- destPoint(p=New_Tracking[c("Ship_Longitude","Ship_Latitude")], 
+                           b=New_Tracking$Target_Bearing, 
+                           d=New_Tracking$Distance)
+
+# Slot the new Beacon tracking points back into New_Tracking DF
+New_Tracking$Beacon_Longitude <- Beacon_Coords[,1]
+New_Tracking$Beacon_Latitude <- Beacon_Coords[,2]
+# Check
+plot(New_Tracking$Beacon_Longitude, New_Tracking$Beacon_Latitude, asp=1)
+# Drop unnecessary columns
+New_Tracking <- New_Tracking[c("Datetime","Beacon_Longitude",
+                               "Beacon_Latitude")]
+# Summary
+print(summary(New_Tracking))
+# Write
+write.csv(New_Tracking, quote = F, row.names = F,
+          file.path(ASDL_path,"Manual_Beacon_Tracking_MasterLog.csv"))
+
 
 
 #===============================================================================
@@ -455,7 +458,7 @@ if ( trackman ){
 
 # Ship position
 # Check for relationship between tofill and forfilling
-tmp <- merge(dat, Hemisphere_Master, by="Datetime")
+tmp <- merge(dat, Hemisphere_GPS_Master, by="Datetime")
 if(nrow(tmp) > 0) {
   plot(tmp$Ship_Longitude, tmp$Longitude)
   # Fill gaps in ship position
@@ -802,7 +805,7 @@ while( any(alongdist_ship > 5) ){
 # Start while loop to remove outliers from ROV positions
 alongdist_rov <- 100
 counter <- 1
-while( any(alongdist_rov > 10) ){
+while( any(alongdist_rov > 50) ){
   # Calculate distance between adjacent points in ROV track
   alongdist_rov <- c(0, geosphere::distGeo(
     as.matrix(dat[1:(nrow(dat)-1), c("ROV_Longitude","ROV_Latitude")]),
@@ -817,11 +820,11 @@ while( any(alongdist_rov > 10) ){
   message("Distance between adjacent ROV positions", "\n")
   print(summary(alongdist_rov))
   # Check
-  message("\nRemoved ", length(which(alongdist_rov > 10)) ,
-          " outliers greater than 10 m between along track ROV positions")
+  message("\nRemoved ", length(which(alongdist_rov > 50)) ,
+          " outliers greater than 50 m between along track ROV positions")
   # Set long/lat values outside of range to NA
-  dat$ROV_Longitude[alongdist_rov > 10] <- NA
-  dat$ROV_Latitude[alongdist_rov > 10] <- NA
+  dat$ROV_Longitude[alongdist_rov > 50] <- NA
+  dat$ROV_Latitude[alongdist_rov > 50] <- NA
   # Re-interpolate ROV long/lat values now that outliers have been removed
   # Variables to interpolate
   variables <- c("ROV_Longitude", "ROV_Latitude")
